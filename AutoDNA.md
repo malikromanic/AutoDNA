@@ -6,7 +6,7 @@
 
 AutoDNA is a university faculty project developed at the Institute of Computer Science (FERI, UM). The core idea is to collect real-time driving data and use AI to analyze how a driver's driving style affects the vehicle — fuel consumption, brake wear, engine load, and overall efficiency. Based on the analysis, the system provides personalized recommendations to help the driver become more economical and vehicle-friendly.
 
-The project targets a real-world problem: as car ownership and fuel costs continue to rise, even small improvements in driving habits can translate to significant savings. AutoDNA makes this accessible through an embedded device and a visualization app.
+The project targets a real-world problem: as car ownership and fuel costs continue to rise, even small improvements in driving habits can translate to significant savings. AutoDNA makes this accessible through an embedded device and a desktop visualization app.
 
 ---
 
@@ -14,14 +14,15 @@ The project targets a real-world problem: as car ownership and fuel costs contin
 
 **Driving style → vehicle impact analysis**
 
-- Collect driving data (IMU + OBD2)
-- Analyze how the driving pattern affects the vehicle
-- Present findings and actionable recommendations to the driver
+- Collect driving data (IMU via STM32 + OBD2 via ESP32)
+- Store all data on SD card during the drive
+- After the drive: transfer to laptop, analyze, present findings and recommendations
 
 ---
 
 ## Planned Extensions
 
+- Real-time streaming from ESP32 to phone/laptop via Bluetooth during the drive
 - Driver identification / profiling by driving style
 - Brake wear simulation via BeamNG.tech (licensed)
 - Predictive maintenance based on simulated + real data
@@ -30,36 +31,53 @@ The project targets a real-world problem: as car ownership and fuel costs contin
 
 ## Hardware
 
-### STM32F411 Discovery (data acquisition)
-- **Sensors:** accelerometer, gyroscope, magnetometer
-- Captures raw motion and orientation data during driving
-- Mounted near the OBD2 port (under dashboard), leverages chassis vibrations
-- Connected to Raspberry Pi via **USB**
+### STM32F411 Discovery (central data recorder)
+- **Sensors:** accelerometer, gyroscope, magnetometer (onboard IMU)
+- Receives OBD2 data from ESP32 via UART
+- Stores all data (IMU + OBD2) on SD card (16GB)
+- Connected to laptop via USB for post-drive data transfer
 
-### OBD2 Reader (ELM327 USB)
+### ESP32 (connectivity bridge)
+- Receives OBD2 data from ELM327 Bluetooth dongle
+- Forwards OBD2 data to STM32 via UART
+- Future: streams recorded data from STM32 to phone/laptop via Bluetooth
+
+### ELM327 Bluetooth OBD2 dongle
 - Reads vehicle ECU data: RPM, speed, throttle position, coolant temperature, fuel trim, engine load, misfire counts
-- Connected to Raspberry Pi via **USB**
+- Currently (development phase): connects directly to laptop/phone for initial data exploration
+- Final plan: communicates exclusively with ESP32
 
-### Raspberry Pi (central hub)
-- Acts as the main processing unit
-- Receives data from both STM32 and OBD2 over USB
-- Runs the data pipeline, AI analysis, and serves the visualization app
-- Chosen over direct STM32↔OBD2 UART wiring for simplicity and flexibility
+---
+
+## System Architecture
+
+### During the drive
+```
+OBD2 port
+  └──► ELM327 BT dongle ──BT──► ESP32 ──UART──► STM32 ──► SD card
+                                                    ▲
+                                             IMU sensors
+                                         (accel, gyro, mag)
+```
+
+### After the drive
+```
+STM32 SD card ──USB──► Laptop ──► Data Pipeline ──► AI Analysis ──► Visualization App
+```
+
+### Future: real-time streaming (planned extension)
+```
+STM32 ──UART──► ESP32 ──BT/WiFi──► Phone / Laptop ──► Live feedback
+```
 
 ---
 
 ## Software Architecture
 
-```
-STM32 (USB) ──┐
-              ├──► Raspberry Pi ──► Data Pipeline ──► AI Analysis ──► Visualization App
-OBD2  (USB) ──┘
-```
-
-### Data Pipeline (Python)
-- Binary packet parsing (`Packet` class)
-- Data storage
-- Decompression of received data
+### Data Pipeline (PC/Laptop)
+- Binary packet parsing
+- Merging IMU and OBD2 data streams by timestamp
+- Data storage and preprocessing
 
 ### AI Analysis
 - Pattern recognition on sensor signals
@@ -67,7 +85,7 @@ OBD2  (USB) ──┘
 - Impact estimation (fuel, brakes, engine)
 - Driver recommendations
 
-### Visualization App
+### Visualization App (desktop)
 - Display of measurements and analysis results
 - Driver recommendations UI
 
@@ -75,10 +93,10 @@ OBD2  (USB) ──┘
 
 ## Sensors & Data Sources
 
-| Source   | Data                                                        |
-|----------|-------------------------------------------------------------|
+| Source | Data |
+|--------|------|
 | STM32 IMU | Acceleration (3-axis), gyroscope (3-axis), magnetometer (3-axis) |
-| OBD2     | RPM, speed, throttle position, coolant temp, fuel trim, engine load, misfire counts |
+| OBD2 (ELM327) | RPM, speed, throttle position, coolant temp, fuel trim, engine load, misfire counts |
 
 ---
 
