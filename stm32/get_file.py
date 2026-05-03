@@ -2,7 +2,7 @@ import serial
 import sys
 import time
 
-PORT     = "COM4"
+PORT     = "COM3"
 BAUD     = 9600
 TIMEOUT  = 2.0  # seconds of silence = done
 FILENAME = sys.argv[1] if len(sys.argv) > 1 else "output.bin"
