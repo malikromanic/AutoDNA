@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+
+# Data files (lokalni, preveliki za repo)
+*.BIN
+*.npz
+*.csv
+
+# OS
+.DS_Store
+Thumbs.db

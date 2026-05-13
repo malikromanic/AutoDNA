@@ -1,0 +1,95 @@
+{
+  "file": "LOG009.npz",
+  "exported": "2026-05-03T12:07:02.762Z",
+  "schema": "autodna-v2-multilayer",
+  "labels": [
+    {
+      "t_start": 0,
+      "t_end": 8.29703094177953,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 60,
+        "intensity": "oster"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 8.132189266398445,
+      "t_end": 32.52875722279905,
+      "turn": null,
+      "hill": {
+        "dir": "down",
+        "angleDeg": 2,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 32.363915547417974,
+      "t_end": 41.43020769337765,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 62,
+        "intensity": "oster"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 41.43020769337765,
+      "t_end": 44.23251617485611,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    },
+    {
+      "t_start": 44.23251617485611,
+      "t_end": 51.485549891623855,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 51,
+        "intensity": "srednji"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 51.32070821624277,
+      "t_end": 59.06826695915377,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 56,
+        "intensity": "srednji"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 58.90342528377269,
+      "t_end": 71.59623428811625,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 28,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 71.76107596349733,
+      "t_end": 79.67347638178943,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 89,
+        "intensity": "oster"
+      },
+      "hill": {
+        "dir": "up",
+        "angleDeg": 3,
+        "intensity": "blag"
+      },
+      "straight": false
+    }
+  ]
+}
