@@ -24,9 +24,9 @@ lines = []
 for graph, name in zip(graphs, SENSOR_NAMES):
     graph.set_title(name)
     graph.set_xlabel("Time (s)")
-    l = [graph.plot([], [], label=c)[0] for c in ("x", "y", "z")]
+    sensor_lines = [graph.plot([], [], label=c)[0] for c in ("x", "y", "z")]
     graph.legend(loc="upper right")
-    lines.append(l)
+    lines.append(sensor_lines)
 plt.tight_layout()
 
 sensors_fvz = {
@@ -94,13 +94,13 @@ def update(_frame):
         graphs[i].relim()
         graphs[i].autoscale_view(scalex=False, scaley=True)
 
-    return [l for trio in lines for l in trio]
+    return [line for trio in lines for line in trio]
 
 
 def graphing():
     thread = threading.Thread(target=serial_processor, daemon=True)
     thread.start()
-    ani = FuncAnimation(fig, update, interval=100, blit=True,
+    ani = FuncAnimation(fig, update, interval=100, blit=True,  # noqa: F841
                         cache_frame_data=False)
     plt.show()
     global running

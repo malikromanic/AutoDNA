@@ -18,7 +18,7 @@ the collected data.
  
 import numpy as np
 import matplotlib.pyplot as plt
-from beamngpy import BeamNGpy, Scenario, Vehicle
+from beamngpy import BeamNGpy, Vehicle
 from beamngpy.sensors import Electrics, State
  
  

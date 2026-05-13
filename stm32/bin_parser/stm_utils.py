@@ -75,37 +75,6 @@ def read_packets_from_file(filepath: str) -> list[Packet]:
     with open(filepath, 'rb') as f:
         stream = f.read()
 
-    packets = []
-    i = 0
-
-    while i < len(stream) - 1:
-        if stream[i] == 0xFF and stream[i + 1] == 0xFF:
-            j = i + 2
-            while j < len(stream) - 1:
-                if stream[j] == 0xFF and stream[j + 1] == 0xFF:
-                    break
-                j += 1
-
-            raw = stream[i:] if j >= len(stream) - 1 else stream[i:j]
-            raw_brez_counterja = b'\xFF\xFF' + raw[3:]
-
-            try:
-                result = parse_packet(raw_brez_counterja)
-                if result:
-                    packets.extend(result)
-            except Exception:
-                pass
-
-            i = j
-        else:
-            i += 1
-
-    return packets
-
-def read_packets_from_file(filepath: str) -> list[Packet]:
-    with open(filepath, 'rb') as f:
-        stream = f.read()
-
     print(f"File size: {len(stream)} bytes")
     packets = []
     i = 0
