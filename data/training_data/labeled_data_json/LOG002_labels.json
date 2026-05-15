@@ -1,0 +1,100 @@
+{
+  "file": "LOG002.npz",
+  "exported": "2026-05-02T22:37:48.362Z",
+  "schema": "autodna-v2-multilayer",
+  "labels": [
+    {
+      "t_start": 13.264822280407945,
+      "t_end": 19.69990525140026,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 98,
+        "intensity": "zelo_oster"
+      },
+      "hill": {
+        "dir": "down",
+        "angleDeg": 13.3,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 19.67256903787409,
+      "t_end": 20.125906226278325,
+      "turn": null,
+      "hill": {
+        "dir": "down",
+        "angleDeg": 13,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 20.138217185229053,
+      "t_end": 22.309817572902723,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 23,
+        "intensity": "blag"
+      },
+      "hill": {
+        "dir": "down",
+        "angleDeg": 13.4,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 22.261108552169684,
+      "t_end": 27.54281847899214,
+      "turn": null,
+      "hill": {
+        "dir": "down",
+        "angleDeg": 13,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 27.55285506722115,
+      "t_end": 37.23429332805735,
+      "turn": null,
+      "hill": {
+        "dir": "down",
+        "angleDeg": 7.5,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 37.2577952190525,
+      "t_end": 41.529017981186115,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 42.2,
+        "intensity": "srednji"
+      },
+      "hill": {
+        "dir": "up",
+        "angleDeg": 4,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 42.779670010655785,
+      "t_end": 47.92638044371563,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 20,
+        "intensity": "blag"
+      },
+      "hill": {
+        "dir": "up",
+        "angleDeg": 2,
+        "intensity": "blag"
+      },
+      "straight": false
+    }
+  ]
+}
