@@ -15,7 +15,7 @@ NUM_EPOCHS = 10
 
 
 def load_sample(filepath):
-    #nalozi en npz sample
+    #nalozi en npz samplee
     data = np.load(filepath)
 
     accel = data["accel_rgb"]
