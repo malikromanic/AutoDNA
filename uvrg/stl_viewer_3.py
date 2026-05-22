@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 
-#podatkovne strukture za vektorje in trikotnike
+#podatkovne strukture za vektorje in trikotnikee
 @dataclass(frozen=True)
 class Vec3:
     x: float
@@ -69,7 +69,7 @@ def is_binary_stl(data: bytes) -> bool:
     return False
 
 
-#nalozi binarni stl model
+#nalozi binarni stl modell
 def load_binary_stl(data: bytes) -> List[Triangle]:
 
     triangles: List[Triangle] = []
