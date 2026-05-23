@@ -17,11 +17,11 @@ from sklearn.model_selection import KFold
  
 #hiperparametri
 num_layers   = 2
-hidden_size  = 4
+hidden_size  = 64
 num_outputs  = 7        
 learning_rate = 0.001
 batch_size   = 1        
-num_epochs   = 15
+num_epochs   = 50
 MAX_ANGLE_TURN = 180.0  
 MAX_ANGLE_HILL = 45.0  
  
@@ -61,10 +61,18 @@ def flatten_sensors(accel, gyro, mag):
               one timestep with all sensor values.
     """
     F, T, _ = accel.shape
-    accel_flat = accel.reshape(F*3, T).T  
+    accel_flat = accel.reshape(F*3, T).T
     gyro_flat  = gyro.reshape(F*3, T).T
     mag_flat   = mag.reshape(F*3, T).T
-    return np.concatenate([accel_flat, gyro_flat, mag_flat], axis=-1) 
+
+    def minmax(arr):
+        mn, mx = arr.min(), arr.max()
+        if mx > mn:
+            return (arr - mn) / (mx - mn)
+        return arr
+
+    # scale each sensor independently to preserve relative differences
+    return np.concatenate([minmax(accel_flat), minmax(gyro_flat), minmax(mag_flat)], axis=-1)
  
  
 class DriveDataset(Dataset):
@@ -214,7 +222,7 @@ def train_model(model, train_set, val_set, print_info):
         
     start_time = time.time()
     
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-2)  #weight deacy = l2
     train_loader = DataLoader(train_set, batch_size=1, shuffle=True)  
     val_loader = DataLoader(val_set, batch_size=1, shuffle=False) 
  
