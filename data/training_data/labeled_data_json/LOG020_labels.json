@@ -1,0 +1,14 @@
+{
+  "file": "LOG020.npz",
+  "exported": "2026-05-23T12:53:47.582Z",
+  "schema": "autodna-v2-multilayer",
+  "labels": [
+    {
+      "t_start": 4.331486762362372,
+      "t_end": 1680.6170236596467,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    }
+  ]
+}

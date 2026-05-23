@@ -1,0 +1,136 @@
+{
+  "file": "LOG017.npz",
+  "exported": "2026-05-23T12:13:03.083Z",
+  "schema": "autodna-v2-multilayer",
+  "labels": [
+    {
+      "t_start": 6.701,
+      "t_end": 12.901,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 90,
+        "intensity": "zelo_oster"
+      },
+      "hill": {
+        "dir": "up",
+        "angleDeg": 5,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 12.786540649698178,
+      "t_end": 59.84398411560762,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    },
+    {
+      "t_start": 59.501,
+      "t_end": 64.501,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 90,
+        "intensity": "zelo_oster"
+      },
+      "hill": {
+        "dir": "up",
+        "angleDeg": 4,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 64.97346847445083,
+      "t_end": 87.27557438246477,
+      "turn": null,
+      "hill": {
+        "dir": "up",
+        "angleDeg": 6,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 87.601,
+      "t_end": 92.801,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 90,
+        "intensity": "zelo_oster"
+      },
+      "hill": {
+        "dir": "up",
+        "angleDeg": 3,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 92.85110085946826,
+      "t_end": 208.37600946298053,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    },
+    {
+      "t_start": 208.901,
+      "t_end": 215.501,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 91,
+        "intensity": "zelo_oster"
+      },
+      "hill": {
+        "dir": "down",
+        "angleDeg": 5,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 215.28966229446485,
+      "t_end": 222.42633618502933,
+      "turn": null,
+      "hill": {
+        "dir": "down",
+        "angleDeg": 5,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 222.42633618502933,
+      "t_end": 228.22488372111295,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 89,
+        "intensity": "oster"
+      },
+      "hill": {
+        "dir": "down",
+        "angleDeg": 3,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 228.22488372111295,
+      "t_end": 264.8003374102558,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    },
+    {
+      "t_start": 264.901,
+      "t_end": 270.501,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 43,
+        "intensity": "srednji"
+      },
+      "hill": null,
+      "straight": false
+    }
+  ]
+}

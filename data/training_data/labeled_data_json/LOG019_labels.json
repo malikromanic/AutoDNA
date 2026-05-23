@@ -1,0 +1,105 @@
+{
+  "file": "LOG019.npz",
+  "exported": "2026-05-23T12:52:08.745Z",
+  "schema": "autodna-v2-multilayer",
+  "labels": [
+    {
+      "t_start": 0.5,
+      "t_end": 8.4,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 90,
+        "intensity": "zelo_oster"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 11.864541136403188,
+      "t_end": 26.632108445367262,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 78,
+        "intensity": "oster"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 27.01076401739198,
+      "t_end": 39.12774232218301,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    },
+    {
+      "t_start": 39.7,
+      "t_end": 44.2,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 25.81832061068701,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 44.4,
+      "t_end": 47.4,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 71,
+        "intensity": "oster"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 47.5,
+      "t_end": 49.8,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 30,
+        "intensity": "srednji"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 49.781792957001066,
+      "t_end": 101.73218799065612,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    },
+    {
+      "t_start": 101.8,
+      "t_end": 105.4,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 28,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 105.4,
+      "t_end": 109.3,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 68,
+        "intensity": "oster"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 109.55767871878088,
+      "t_end": 496.54367332804446,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    }
+  ]
+}

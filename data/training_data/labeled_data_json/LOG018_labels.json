@@ -1,0 +1,88 @@
+{
+  "file": "LOG018.npz",
+  "exported": "2026-05-23T12:25:01.755Z",
+  "schema": "autodna-v2-multilayer",
+  "labels": [
+    {
+      "t_start": 39.858805802188634,
+      "t_end": 128.39344772923144,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    },
+    {
+      "t_start": 128.83065583751312,
+      "t_end": 138.44923421971038,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 89,
+        "intensity": "oster"
+      },
+      "hill": {
+        "dir": "up",
+        "angleDeg": 2,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 138.6678382738512,
+      "t_end": 145.00735584393578,
+      "turn": null,
+      "hill": {
+        "dir": "up",
+        "angleDeg": 5,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 144.78875178979493,
+      "t_end": 152.87710179300626,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 91,
+        "intensity": "zelo_oster"
+      },
+      "hill": {
+        "dir": "up",
+        "angleDeg": 3,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 152.87710179300626,
+      "t_end": 243.5977842614575,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    },
+    {
+      "t_start": 243.5977842614575,
+      "t_end": 251.68613426466882,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 88,
+        "intensity": "oster"
+      },
+      "hill": {
+        "dir": "down",
+        "angleDeg": 2,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 251.90473831880965,
+      "t_end": 283.6023261692324,
+      "turn": null,
+      "hill": {
+        "dir": "down",
+        "angleDeg": 4,
+        "intensity": "blag"
+      },
+      "straight": false
+    }
+  ]
+}
