@@ -1,0 +1,97 @@
+{
+  "file": "LOG017.npz",
+  "exported": "2026-05-23T14:41:25.724Z",
+  "schema": "autodna-v2-multilayer",
+  "labels": [
+    {
+      "t_start": 4.114144472775317,
+      "t_end": 27.197321644559217,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    },
+    {
+      "t_start": 27.70560557319677,
+      "t_end": 29.66885435764859,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 9.6,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 29.9205529197578,
+      "t_end": 31.883801704209617,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 8.7,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 32.53628779313509,
+      "t_end": 52.007811393823545,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    },
+    {
+      "t_start": 52.40236842106538,
+      "t_end": 66.3757686643225,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 50.2,
+        "intensity": "srednji"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 66.3625640547666,
+      "t_end": 77.69799670682313,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    },
+    {
+      "t_start": 77.50303528141608,
+      "t_end": 78.94357757183406,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 20.3,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 78.99632994318267,
+      "t_end": 81.57837129248018,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 22.3,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 81.89960258639815,
+      "t_end": 114.16881481830953,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    },
+    {
+      "t_start": 114.97620626379188,
+      "t_end": 185.48196510822027,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    }
+  ]
+}
