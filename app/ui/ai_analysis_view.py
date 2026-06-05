@@ -35,7 +35,7 @@ def _make_info_card(title: str, items: list) -> QFrame:
     layout.addWidget(t)
 
     for key, val in items:
-        row = QLabel(f"<span style='color:#666'>{key}:</span>&nbsp;<b>{val}</b>")
+        row = QLabel(f"<span style='color:#666'>{key}:</span>&nbsp;<span style='color:#000'>{val}</span>")
         row.setStyleSheet("font-size: 11px; border: none;")
         row.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(row)
