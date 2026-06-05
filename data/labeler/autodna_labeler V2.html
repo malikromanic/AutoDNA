@@ -1,0 +1,1248 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+<meta charset="UTF-8">
+<title>AutoDNA — Labeling Tool</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Bebas+Neue&display=swap');
+:root{
+  --bg:#07080a; --panel:#0f1115; --panel2:#14171e; --border:#1e2430; --border2:#252d3c;
+  --text:#b8c4d0; --muted:#445060; --accent:#00d4ff; --accent2:#ff6b35; --accent3:#39ff14;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospace;height:100vh;overflow:hidden;display:flex;flex-direction:column;font-size:11px}
+
+.hdr{display:flex;align-items:center;gap:14px;padding:8px 18px;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0}
+.logo{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:3px;color:var(--accent);text-shadow:0 0 18px rgba(0,212,255,.4)}
+.logo span{color:var(--accent2)}
+.file-pill{background:var(--panel2);border:1px solid var(--border2);border-radius:3px;padding:3px 9px;font-size:11px;color:var(--text);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hdr-stat{font-size:10px;color:var(--muted)}
+.hdr-stat b{color:var(--accent)}
+.hdr-cur{margin-left:auto;font-size:10px;color:var(--muted);background:var(--panel2);border:1px solid var(--border);padding:3px 10px;border-radius:3px;white-space:nowrap}
+.hdr-cur b{color:var(--text)}
+
+.toolbar{display:flex;align-items:center;gap:7px;padding:7px 18px;background:var(--panel2);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
+.cat-btn{padding:4px 11px;border:2px solid;background:transparent;font-family:inherit;font-size:10px;font-weight:700;letter-spacing:1px;cursor:pointer;border-radius:3px;transition:all .12s;text-transform:uppercase}
+.cat-btn.active{filter:brightness(1.5)}
+.btn-cl{border-color:#3b82f6;color:#3b82f6}.btn-cl.active{background:#3b82f6;color:#000}
+.btn-cr{border-color:#ef4444;color:#ef4444}.btn-cr.active{background:#ef4444;color:#fff}
+.btn-ch{border-color:#f59e0b;color:#f59e0b}.btn-ch.active{background:#f59e0b;color:#000}
+.btn-cs{border-color:#22c55e;color:#22c55e}.btn-cs.active{background:#22c55e;color:#000}
+.tsep{width:1px;height:22px;background:var(--border2);margin:0 2px}
+.tbtn{padding:4px 10px;border:1px solid var(--border2);background:transparent;color:var(--muted);font-family:inherit;font-size:10px;cursor:pointer;border-radius:3px;transition:all .12s}
+.tbtn:hover{border-color:var(--accent);color:var(--accent)}
+.tbtn.ex{border-color:var(--accent3);color:var(--accent3)}
+.zoom-info{font-size:10px;color:var(--muted);margin-left:auto}
+.zoom-info b{color:var(--text)}
+
+.body-wrap{display:flex;flex:1;overflow:hidden;min-height:0}
+
+.charts-col{flex:1;overflow-y:auto;overflow-x:hidden;padding:8px 8px 8px 10px;position:relative}
+.charts-col::-webkit-scrollbar{width:5px}
+.charts-col::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+.sec{margin:8px 0 4px;display:flex;align-items:center;gap:8px}
+.sec-tag{font-family:'Bebas Neue',sans-serif;font-size:11px;letter-spacing:2px;padding:2px 9px;border-radius:2px}
+.sec-g{background:rgba(0,229,255,.08);color:#00e5ff;border:1px solid rgba(0,229,255,.2)}
+.sec-a{background:rgba(247,127,0,.08);color:#f77f00;border:1px solid rgba(247,127,0,.2)}
+.sec-m{background:rgba(199,125,255,.08);color:#c77dff;border:1px solid rgba(199,125,255,.2)}
+.sec-note{font-size:9px;color:var(--muted)}
+
+.card{background:var(--panel);border:1px solid var(--border);border-radius:3px;margin-bottom:5px}
+.card-hdr{display:flex;align-items:center;gap:8px;padding:4px 10px;border-bottom:1px solid var(--border)}
+.card-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.card-name{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+.card-val{margin-left:auto;font-size:9px;color:var(--muted);font-variant-numeric:tabular-nums}
+.card canvas{display:block;cursor:crosshair;user-select:none;width:100%}
+
+.empty-overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:rgba(7,8,10,.92);z-index:50;backdrop-filter:blur(2px)}
+.empty-overlay.gone{display:none}
+.empty-icon{font-size:42px;opacity:.4}
+.empty-text{font-size:11px;color:var(--muted);text-align:center;line-height:1.9;letter-spacing:1px}
+.upload-btn{padding:9px 22px;border:1px solid var(--accent);background:transparent;color:var(--accent);font-family:inherit;font-size:11px;cursor:pointer;border-radius:3px;letter-spacing:1px}
+.upload-btn:hover{background:rgba(0,212,255,.1)}
+.empty-hint{font-size:9px;color:var(--muted);opacity:.6}
+
+.sidebar{width:270px;background:var(--panel);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.sb-tabs{display:flex;border-bottom:1px solid var(--border)}
+.sb-tab{flex:1;padding:8px 4px;font-family:inherit;font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;background:transparent;border:none;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .12s}
+.sb-tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-pane{display:none;flex:1;overflow:hidden;flex-direction:column;min-height:0}
+.tab-pane.on{display:flex}
+.sb-hdr{padding:8px 12px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+.lcount{background:var(--accent);color:#000;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px}
+.llist{flex:1;overflow-y:auto;padding:5px}
+.llist::-webkit-scrollbar{width:3px}
+.llist::-webkit-scrollbar-thumb{background:var(--border2)}
+.litem{display:flex;align-items:flex-start;gap:7px;padding:7px 9px;margin-bottom:3px;background:var(--panel2);border-radius:3px;border-left:3px solid;cursor:pointer;font-size:10px}
+.litem:hover{filter:brightness(1.15)}
+.litem.sel{outline:1px solid var(--accent)}
+.li-info{flex:1;min-width:0}
+.li-cat{font-weight:700;font-size:10px;margin-bottom:2px}
+.li-time{color:var(--muted);font-size:9px;font-variant-numeric:tabular-nums}
+.li-angle{color:var(--text);font-size:9px;margin-top:2px;font-variant-numeric:tabular-nums}
+.li-del{background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:11px;padding:0 2px}
+.li-del:hover{color:#ef4444}
+.no-labels{padding:24px 14px;color:var(--muted);font-size:10px;text-align:center;line-height:1.7}
+.sb-foot{padding:9px 12px;border-top:1px solid var(--border);font-size:9px;color:var(--muted);line-height:1.7}
+
+.explainer{padding:14px;overflow-y:auto;font-size:10px;line-height:1.6}
+.ex-h{font-family:'Bebas Neue',sans-serif;font-size:13px;letter-spacing:2px;color:var(--accent);margin:14px 0 6px}
+.ex-h:first-child{margin-top:0}
+.ex-p{color:var(--text);margin-bottom:6px}
+.ex-p b{color:var(--accent2)}
+.ex-formula{background:var(--panel2);border:1px solid var(--border2);padding:6px 9px;border-radius:3px;font-size:10px;color:var(--accent);margin:5px 0;font-family:inherit}
+.ex-code{background:var(--panel2);border:1px solid var(--border2);padding:7px 9px;border-radius:3px;font-size:9px;color:var(--text);margin:5px 0;white-space:pre;overflow-x:auto}
+.ex-tip{background:rgba(0,212,255,.05);border:1px solid rgba(0,212,255,.2);padding:8px 10px;border-radius:3px;font-size:10px;line-height:1.7;margin-top:8px}
+
+.popup-bg{position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:200;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.popup{background:var(--panel);border:1px solid var(--border2);border-radius:6px;padding:20px 22px;width:340px;box-shadow:0 24px 64px rgba(0,0,0,.7)}
+.pop-title{font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:2px;margin-bottom:2px}
+.pop-sub{font-size:9px;color:var(--muted);margin-bottom:16px;font-variant-numeric:tabular-nums}
+.pop-field{margin-bottom:12px}
+.pop-field label{display:block;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
+.pop-field select,.pop-field input[type=number]{width:100%;background:var(--panel2);border:1px solid var(--border2);color:var(--text);font-family:inherit;font-size:11px;padding:6px 9px;border-radius:3px;outline:none}
+.pop-field select:focus,.pop-field input:focus{border-color:var(--accent)}
+.pop-auto{font-size:10px;margin-top:3px;color:var(--accent)}
+.pop-auto span{color:var(--muted)}
+.pop-btns{display:flex;gap:7px;margin-top:16px}
+.pop-ok{flex:1;padding:8px;background:var(--accent);color:#000;border:none;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;border-radius:3px;letter-spacing:1px}
+.pop-cancel{padding:8px 14px;background:transparent;border:1px solid var(--border2);color:var(--muted);font-family:inherit;font-size:11px;cursor:pointer;border-radius:3px}
+.pop-cancel:hover{border-color:var(--accent2);color:var(--accent2)}
+
+.toast{position:fixed;top:60px;right:18px;background:var(--panel);border:1px solid var(--accent);color:var(--text);padding:9px 14px;border-radius:3px;font-size:10px;z-index:300;box-shadow:0 8px 24px rgba(0,0,0,.5);opacity:0;transition:opacity .25s}
+.toast.show{opacity:1}
+.toast.err{border-color:#ef4444;color:#ef4444}
+
+.tbtn.focus-on{border-color:var(--accent2);color:var(--accent2);background:rgba(255,107,53,.08)}
+.focus-banner{padding:5px 10px;background:rgba(255,107,53,.12);border-bottom:1px solid rgba(255,107,53,.3);font-size:10px;color:var(--accent2);display:flex;align-items:center;gap:8px}
+.focus-banner b{color:#fff}
+.focus-banner button{margin-left:auto;background:transparent;border:1px solid rgba(255,107,53,.4);color:var(--accent2);padding:2px 8px;border-radius:2px;font-family:inherit;font-size:9px;cursor:pointer}
+.focus-banner button:hover{background:rgba(255,107,53,.2)}
+
+.litem .li-tags{display:flex;gap:3px;margin-top:3px;flex-wrap:wrap}
+.litem .li-tag{font-size:8px;padding:1px 5px;border-radius:8px;font-weight:700;letter-spacing:.5px}
+.layer-toggle{display:flex;gap:4px;padding:6px 10px;border-bottom:1px solid var(--border);font-size:9px;background:var(--panel2)}
+.layer-toggle label{display:flex;align-items:center;gap:4px;color:var(--muted);cursor:pointer;padding:2px 6px;border-radius:2px;border:1px solid var(--border2)}
+.layer-toggle label:has(input:checked){color:var(--text);border-color:var(--accent)}
+.layer-toggle input{margin:0;cursor:pointer}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="logo">Auto<span>DNA</span></div>
+  <div class="file-pill" id="fname">Ni datoteke</div>
+  <div class="hdr-stat">gyro <b id="hn-g">—</b></div>
+  <div class="hdr-stat">accel <b id="hn-a">—</b></div>
+  <div class="hdr-stat">mag <b id="hn-m">—</b></div>
+  <div class="hdr-cur">t=<b id="cur-t">—</b>s &nbsp; gz=<b id="cur-gz">—</b> &nbsp; gy=<b id="cur-gy">—</b></div>
+</div>
+
+<div class="toolbar">
+  <span style="font-size:9px;color:var(--muted)">KAT:</span>
+  <button class="cat-btn btn-cl active" id="btn-turn_left"  onclick="setCat('turn_left')">◄ Levi</button>
+  <button class="cat-btn btn-cr"        id="btn-turn_right" onclick="setCat('turn_right')">► Desni</button>
+  <button class="cat-btn btn-ch"        id="btn-hill"       onclick="setCat('hill')">▲ Hrib</button>
+  <button class="cat-btn btn-cs"        id="btn-straight"   onclick="setCat('straight')">— Ravnina</button>
+  <div class="tsep"></div>
+  <button class="tbtn" onclick="document.getElementById('fi-npz').click()">📂 NPZ</button>
+  <input type="file" id="fi-npz" accept=".npz" style="display:none" onchange="loadNPZ(this)">
+  <button class="tbtn" onclick="document.getElementById('fi-json').click()">📂 Oznake</button>
+  <input type="file" id="fi-json" accept=".json" style="display:none" onchange="loadJSON(this)">
+  <div class="tsep"></div>
+  <button class="tbtn" onclick="undo()" title="Razveljavi (Ctrl+Z)">↩</button>
+  <button class="tbtn" onclick="clearAll()">✕</button>
+  <button class="tbtn" onclick="resetZoom()" title="Pokaži vse">⤢</button>
+  <button class="tbtn ex" onclick="exportJSON()">⬇ JSON</button>
+  <button class="tbtn ex" onclick="exportCSV()">⬇ CSV</button>
+  <div class="tsep"></div>
+  <button class="tbtn" id="btn-focus" onclick="toggleFocus()" title="Pokaži samo izbrani interval">👁 Focus</button>
+  <div class="zoom-info">Vidno: <b id="range-disp">—</b> &nbsp;|&nbsp; scroll=zoom · D.klik=pan</div>
+</div>
+
+<div class="body-wrap">
+
+<div class="charts-col" id="charts-col">
+  <!-- GYROSCOPE -->
+  <div class="sec"><div class="sec-tag sec-g">Gyroscope</div><div class="sec-note">deg/s</div></div>
+  <div class="card"><div class="card-hdr"><span class="card-dot" style="background:#ff4d6d"></span><span class="card-name">Gyro X — Roll</span><span class="card-val" id="cv-gx">—</span></div><canvas id="c-gx" height="75"></canvas></div>
+  <div class="card"><div class="card-hdr"><span class="card-dot" style="background:#ffd166"></span><span class="card-name">Gyro Y — Pitch (hribi)</span><span class="card-val" id="cv-gy">—</span></div><canvas id="c-gy" height="75"></canvas></div>
+  <div class="card"><div class="card-hdr"><span class="card-dot" style="background:#00e5ff"></span><span class="card-name">Gyro Z — Yaw (ovinki) ★</span><span class="card-val" id="cv-gz">—</span></div><canvas id="c-gz" height="90"></canvas></div>
+  <div class="card"><div class="card-hdr"><span class="card-dot" style="background:#a78bfa"></span><span class="card-name">Heading ∫yaw</span><span class="card-val" id="cv-hdg">—</span></div><canvas id="c-hdg" height="65"></canvas></div>
+
+  <!-- ACCELEROMETER -->
+  <div class="sec" style="margin-top:6px"><div class="sec-tag sec-a">Accelerometer</div><div class="sec-note">raw LSB</div></div>
+  <div class="card"><div class="card-hdr"><span class="card-dot" style="background:#f77f00"></span><span class="card-name">Accel X</span><span class="card-val" id="cv-ax">—</span></div><canvas id="c-ax" height="75"></canvas></div>
+  <div class="card"><div class="card-hdr"><span class="card-dot" style="background:#4cc9f0"></span><span class="card-name">Accel Y</span><span class="card-val" id="cv-ay">—</span></div><canvas id="c-ay" height="75"></canvas></div>
+  <div class="card"><div class="card-hdr"><span class="card-dot" style="background:#7bed9f"></span><span class="card-name">Accel Z</span><span class="card-val" id="cv-az">—</span></div><canvas id="c-az" height="75"></canvas></div>
+  <div class="card"><div class="card-hdr"><span class="card-dot" style="background:#e0e0e0"></span><span class="card-name">|a| magnituda</span><span class="card-val" id="cv-am">—</span></div><canvas id="c-am" height="60"></canvas></div>
+
+  <!-- MAGNETOMETER -->
+  <div class="sec" style="margin-top:6px"><div class="sec-tag sec-m">Magnetometer</div><div class="sec-note">raw LSB</div></div>
+  <div class="card"><div class="card-hdr"><span class="card-dot" style="background:#ff6b9d"></span><span class="card-name">Mag X</span><span class="card-val" id="cv-mx">—</span></div><canvas id="c-mx" height="75"></canvas></div>
+  <div class="card"><div class="card-hdr"><span class="card-dot" style="background:#c77dff"></span><span class="card-name">Mag Y</span><span class="card-val" id="cv-my">—</span></div><canvas id="c-my" height="75"></canvas></div>
+  <div class="card"><div class="card-hdr"><span class="card-dot" style="background:#48cae4"></span><span class="card-name">Mag Z</span><span class="card-val" id="cv-mz">—</span></div><canvas id="c-mz" height="75"></canvas></div>
+  <div class="card"><div class="card-hdr"><span class="card-dot" style="background:#90e0ef"></span><span class="card-name">Compass atan2(Y,X)</span><span class="card-val" id="cv-cmp">—</span></div><canvas id="c-cmp" height="60"></canvas></div>
+  <div style="height:12px"></div>
+
+  <div class="empty-overlay" id="empty-overlay">
+    <div class="empty-icon">📁</div>
+    <div class="empty-text">Uvozi .npz datoteko<br>za začetek označevanja</div>
+    <button class="upload-btn" onclick="document.getElementById('fi-npz').click()">📂 Uvozi NPZ</button>
+    <div class="empty-hint">podpira ZIP64 / deflate / stored</div>
+  </div>
+</div>
+
+<div class="sidebar">
+  <div class="sb-tabs">
+    <button class="sb-tab on" onclick="showTab('labels')">Oznake</button>
+    <button class="sb-tab"    onclick="showTab('explainer')">Razlaga</button>
+  </div>
+  <div class="tab-pane on" id="tp-labels">
+    <div class="sb-hdr">Segmenti <span class="lcount" id="lcount">0</span></div>
+    <div class="layer-toggle" title="Pokaži/skrij plasti oznak na grafih">
+      <label><input type="checkbox" id="show-turns" checked onchange="renderAll()"><span style="color:#3b82f6">◄►</span> Ovinki</label>
+      <label><input type="checkbox" id="show-hills" checked onchange="renderAll()"><span style="color:#f59e0b">▲▼</span> Hribi</label>
+      <label><input type="checkbox" id="show-straight" checked onchange="renderAll()"><span style="color:#22c55e">—</span> Rav.</label>
+    </div>
+    <div class="llist" id="llist"><div class="no-labels">Uvozi NPZ in<br>povleci po grafu.</div></div>
+    <div class="sb-foot">
+      <span style="color:var(--text)">Legenda:</span><br>
+      <span style="color:#3b82f6">■</span> Levi ovinek &nbsp;<span style="color:#ef4444">■</span> Desni<br>
+      <span style="color:#f59e0b">■</span> Hrib &nbsp;<span style="color:#22c55e">■</span> Ravnina<br>
+      <span style="color:var(--muted);font-size:8px">Klik = focus · Shift+klik = zoom</span>
+    </div>
+  </div>
+  <div class="tab-pane" id="tp-explainer">
+    <div class="explainer">
+      <div class="ex-h">Kako deluje označevanje</div>
+      <div class="ex-p">Vsak segment ima do <b>dve neodvisni plasti</b>: ovinek (yaw) in hrib (pitch). Lahko sta hkrati — npr. ovinek navzdol po hribu.</div>
+      <div class="ex-h">Izračun kota</div>
+      <div class="ex-p"><b>Ovinki</b> — integracija Gyro Z:</div>
+      <div class="ex-formula">Δθ = Σ gz[i] × (t[i] − t[i−1])</div>
+      <div class="ex-p"><b>Hribi</b> — integracija Gyro Y:</div>
+      <div class="ex-formula">Δφ = Σ gy[i] × (t[i] − t[i−1])</div>
+      <div class="ex-p">Intenziteta se izračuna iz |angle|: 0–30°=blag · 30–60°=srednji · 60–90°=oster · 90°+=zelo oster</div>
+
+      <div class="ex-h">Zakaj je avto-kot včasih napačen?</div>
+      <div class="ex-p"><b>1. Bias gyroskopa</b> — MPU6050 ima konstanten odmik (~0.4°/s), ki se akumulira med integracijo. Pri 5s ovinku to pomeni ~2° napake.</div>
+      <div class="ex-p"><b>2. Časovni žigi v paketih</b> — STM32 vrača vzorce v skupinah z istim časovnim žigom (efektivno ~10Hz). Integracija deluje pravilno, a izgubi nekaj resolucije.</div>
+      <div class="ex-p"><b>3. Izbira intervala</b> — če interval ne pokrije celega manevra (vključno z začetnim in končnim obračanjem volana), bo kot premajhen.</div>
+      <div class="ex-p"><b>4. Cesta ≠ kot</b> — 90° ovinek na zemljevidu pomeni 90° spremembe smeri vožnje, kar se zgodi <b>postopoma</b> skozi krivuljo. Vozilo ne zavije ostro.</div>
+      <div class="ex-p" style="color:var(--accent2)"><b>Najboljša praksa:</b> ročno popravi kot v popupu, če veš pravo vrednost iz zemljevida. Boljša oznaka = boljši AI.</div>
+
+      <div class="ex-h">Zakaj kompas ne sledi gyru?</div>
+      <div class="ex-p">Magnetometer v vozilu mora biti <b>kalibriran</b> (hard-iron + soft-iron). Brez kalibracije karoserija/elektronika izkrivijo polje in kompas kaže manj vrtenja kot dejansko. To je <b>pričakovano</b> — uporabljaj gyro za relativno spremembo smeri, ne kompas.</div>
+
+      <div class="ex-h">Sidebar: Focus mode</div>
+      <div class="ex-p"><b>Klik</b> na segment = zoom okrog njega.<br><b>Shift+klik</b> ali <b>👁 Focus</b> gumb = pokaži <b>samo</b> ta interval.</div>
+
+      <div class="ex-h">Izvoz</div>
+      <div class="ex-p"><b>JSON</b> — vsak segment z obema plastema (turn + hill).</div>
+      <div class="ex-p"><b>CSV vektor</b> — multi-label format: <code>turn_class</code> (0=none, 1=L, 2=R) in <code>hill_class</code> (0=none, 1=up, 2=down) v ločenih stolpcih → nevronska mreža lahko trenira <b>multi-output klasifikator</b>.</div>
+      <div class="ex-h">AI trening</div>
+      <div class="ex-tip"><b style="color:var(--accent)">AutoDNA MVP:</b><br>Sliding window (2s=20 vzorcev@10Hz) + <b>multi-task</b> CNN/LSTM:<br>• Output 1: turn_class (3 razredi)<br>• Output 2: hill_class (3 razredi)<br>Multi-label > multi-class ker fizično sta yaw in pitch ortogonalna.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- Popup -->
+<div class="popup-bg" id="popup" style="display:none">
+  <div class="popup" style="width:380px">
+    <div class="pop-title" id="pop-title">Segment</div>
+    <div class="pop-sub" id="pop-sub">—</div>
+
+    <div style="background:var(--panel2);border:1px solid var(--border2);border-radius:3px;padding:10px;margin-bottom:12px">
+      <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">★ Označi neodvisno (lahko oboje hkrati)</div>
+
+      <!-- TURN LAYER -->
+      <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)">
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:10px;color:var(--text);margin-bottom:6px">
+          <input type="checkbox" id="pop-has-turn" style="margin:0;cursor:pointer" onchange="togglePopSection('turn')">
+          <b style="color:#3b82f6">◄►</b> Ovinek (yaw)
+          <span style="margin-left:auto;color:var(--muted);font-size:9px">avto: <b id="pop-auto-turn" style="color:var(--accent)">—</b></span>
+        </label>
+        <div id="pop-turn-fields" style="display:none;padding-left:22px">
+          <div style="display:flex;gap:6px;align-items:center;font-size:10px;margin-bottom:6px">
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="turn-dir" value="left" style="margin:0"> Levi</label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="turn-dir" value="right" style="margin:0"> Desni</label>
+            <input type="number" id="pop-turn-angle" step="0.1" placeholder="kot°" style="flex:1;background:var(--panel);border:1px solid var(--border2);color:var(--text);font-family:inherit;font-size:10px;padding:3px 6px;border-radius:2px">
+          </div>
+        </div>
+      </div>
+
+      <!-- HILL LAYER -->
+      <div>
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:10px;color:var(--text);margin-bottom:6px">
+          <input type="checkbox" id="pop-has-hill" style="margin:0;cursor:pointer" onchange="togglePopSection('hill')">
+          <b style="color:#f59e0b">▲▼</b> Hrib (pitch)
+          <span style="margin-left:auto;color:var(--muted);font-size:9px">avto: <b id="pop-auto-hill" style="color:var(--accent)">—</b></span>
+        </label>
+        <div id="pop-hill-fields" style="display:none;padding-left:22px">
+          <div style="display:flex;gap:6px;align-items:center;font-size:10px;margin-bottom:6px">
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="hill-dir" value="up" style="margin:0"> Navzgor</label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="hill-dir" value="down" style="margin:0"> Navzdol</label>
+            <input type="number" id="pop-hill-angle" step="0.1" placeholder="kot°" style="flex:1;background:var(--panel);border:1px solid var(--border2);color:var(--text);font-family:inherit;font-size:10px;padding:3px 6px;border-radius:2px">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:10px;color:var(--text)">
+        <input type="checkbox" id="pop-is-straight" style="margin:0;cursor:pointer">
+        <b style="color:#22c55e">—</b> Ravnina (oboje izklopi)
+      </label>
+    </div>
+
+    <div class="pop-btns">
+      <button class="pop-cancel" onclick="closePopup()">Prekliči</button>
+      <button class="pop-ok" onclick="confirmLabel()">✓ Shrani</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+// ── SENSOR DATA ──────────────────────────────────────────────────────────────
+const SENSOR = {
+  gyro:  { t:[], x:[], y:[], z:[], heading:[] },
+  accel: { t:[], x:[], y:[], z:[], mag:[]     },
+  mag:   { t:[], x:[], y:[], z:[], compass:[] },
+};
+
+const CHART_MAP = {
+  'c-gx':  { s:'gyro',  ch:'x',       color:'#ff4d6d', zero:true,  lv:'cv-gx',  unit:'°/s' },
+  'c-gy':  { s:'gyro',  ch:'y',       color:'#ffd166', zero:true,  lv:'cv-gy',  unit:'°/s' },
+  'c-gz':  { s:'gyro',  ch:'z',       color:'#00e5ff', zero:true,  lv:'cv-gz', primary:true, unit:'°/s' },
+  'c-hdg': { s:'gyro',  ch:'heading', color:'#a78bfa', zero:false, lv:'cv-hdg', unit:'°' },
+  'c-ax':  { s:'accel', ch:'x',       color:'#f77f00', zero:true,  lv:'cv-ax',  unit:'' },
+  'c-ay':  { s:'accel', ch:'y',       color:'#4cc9f0', zero:true,  lv:'cv-ay',  unit:'' },
+  'c-az':  { s:'accel', ch:'z',       color:'#7bed9f', zero:true,  lv:'cv-az',  unit:'' },
+  'c-am':  { s:'accel', ch:'mag',     color:'#e0e0e0', zero:false, lv:'cv-am',  unit:'' },
+  'c-mx':  { s:'mag',   ch:'x',       color:'#ff6b9d', zero:true,  lv:'cv-mx',  unit:'' },
+  'c-my':  { s:'mag',   ch:'y',       color:'#c77dff', zero:true,  lv:'cv-my',  unit:'' },
+  'c-mz':  { s:'mag',   ch:'z',       color:'#48cae4', zero:true,  lv:'cv-mz',  unit:'' },
+  'c-cmp': { s:'mag',   ch:'compass', color:'#90e0ef', zero:false, lv:'cv-cmp', unit:'°' },
+};
+
+// ── VIEW STATE ────────────────────────────────────────────────────────────────
+let DURATION = 1, viewStart = 0, viewEnd = 1, dataLoaded = false;
+let dragState = null, panState = null;
+let labels = [], labelId = 0, selectedId = null, currentCat = 'turn_left';
+let pending = null;
+let focusMode = false; // when true, viewport is locked to selected label's interval
+
+// New label model:
+// {
+//   id, tStart, tEnd,
+//   turn: { dir: 'left'|'right', angleDeg: number, intensity: string } | null,
+//   hill: { dir: 'up'|'down', angleDeg: number, intensity: string } | null,
+//   straight: bool   // true ⟺ both turn and hill are null
+// }
+// "color" is derived from which layers are present (priority: turn > hill > straight).
+
+const CAT = {
+  turn_left:  { color:'#3b82f6', label:'Levi ovinek',  subtypes:['Levi ovinek'] },
+  turn_right: { color:'#ef4444', label:'Desni ovinek', subtypes:['Desni ovinek'] },
+  hill:       { color:'#f59e0b', label:'Hrib',         subtypes:['Hrib navzgor','Hrib navzdol'] },
+  straight:   { color:'#22c55e', label:'Ravnina',      subtypes:['Ravnina'] },
+};
+
+// Color helpers — labels can now be multi-layer, so they may have BOTH a turn color
+// (drawn at top of the band) and a hill color (drawn at bottom).
+function turnColor(lbl){
+  if (!lbl.turn) return null;
+  return lbl.turn.dir === 'left' ? '#3b82f6' : '#ef4444';
+}
+function hillColor(lbl){
+  if (!lbl.hill) return null;
+  return '#f59e0b';
+}
+function primaryColor(lbl){
+  return turnColor(lbl) || hillColor(lbl) || '#22c55e';
+}
+
+function setCat(c){ currentCat = c; document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active')); document.getElementById('btn-'+c).classList.add('active'); }
+
+function toast(msg, isErr){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.toggle('err', !!isErr); t.classList.add('show');
+  clearTimeout(toast._h); toast._h = setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+// ── CANVAS SIZING ─────────────────────────────────────────────────────────────
+function sizeAllCanvases(){
+  const col = document.getElementById('charts-col');
+  const colW = col.clientWidth - 18;
+  if (colW <= 0) return;
+  Object.keys(CHART_MAP).forEach(cid => {
+    const cv = document.getElementById(cid);
+    if (cv) cv.width = colW;
+  });
+}
+
+function renderAll(){
+  Object.keys(CHART_MAP).forEach(cid => renderOne(cid));
+  let rangeText;
+  if (!dataLoaded) rangeText = '—';
+  else if (focusMode && selectedId !== null) rangeText = '🔒 ' + viewStart.toFixed(1) + '–' + viewEnd.toFixed(1) + 's';
+  else rangeText = viewStart.toFixed(1) + '–' + viewEnd.toFixed(1) + 's';
+  document.getElementById('range-disp').textContent = rangeText;
+}
+
+// ── RENDER ENGINE ─────────────────────────────────────────────────────────────
+const PL=44, PR=8, PT=4, PB=14;
+
+function renderOne(cid){
+  const cv = document.getElementById(cid); if (!cv) return;
+  const m = CHART_MAP[cid];
+  const T = SENSOR[m.s].t, D = SENSOR[m.s][m.ch];
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+
+  ctx.fillStyle = '#0f1115'; ctx.fillRect(0, 0, W, H);
+
+  if (!dataLoaded || !T.length || !D.length){
+    ctx.fillStyle = '#2a3040'; ctx.font = '9px JetBrains Mono'; ctx.textAlign = 'center';
+    ctx.fillText(dataLoaded ? '— ni podatkov —' : '— uvozi NPZ —', W/2, H/2 + 3);
+    return;
+  }
+
+  const cW = W - PL - PR, cH = H - PT - PB;
+
+  // Find visible index range using binary search (much faster than linear scan)
+  const lo = lowerBound(T, viewStart - 0.1);
+  const hi = upperBound(T, viewEnd + 0.1);
+  if (hi <= lo) return;
+
+  // Y range across visible window
+  let mn = Infinity, mx = -Infinity;
+  for (let i = lo; i < hi; i++){ const v = D[i]; if (v < mn) mn = v; if (v > mx) mx = v; }
+  if (mn === mx){ mn -= 1; mx += 1; }
+  const pad = (mx - mn) * 0.08; mn -= pad; mx += pad;
+  const rng = mx - mn;
+
+  const tX = t => PL + ((t - viewStart) / (viewEnd - viewStart)) * cW;
+  const vY = v => PT + ((mx - v) / rng) * cH;
+
+  // Grid + Y labels
+  ctx.strokeStyle = '#171e28'; ctx.lineWidth = 1; ctx.setLineDash([2, 5]);
+  for (let i = 0; i <= 4; i++){
+    const v = mn + (i/4) * rng, y = vY(v);
+    ctx.beginPath(); ctx.moveTo(PL, y); ctx.lineTo(W - PR, y); ctx.stroke();
+    ctx.fillStyle = '#3a4a5a'; ctx.font = '8px JetBrains Mono'; ctx.textAlign = 'right';
+    ctx.fillText(formatNum(v), PL - 3, y + 3);
+  }
+  ctx.setLineDash([]);
+
+  // Zero line
+  if (m.zero && mn < 0 && mx > 0){
+    const zy = vY(0);
+    ctx.strokeStyle = '#2a3a48'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(PL, zy); ctx.lineTo(W - PR, zy); ctx.stroke();
+  }
+
+  // Time ticks
+  ctx.fillStyle = '#3a4a5a'; ctx.font = '8px JetBrains Mono'; ctx.textAlign = 'center';
+  const span = viewEnd - viewStart;
+  const step = span > 200 ? 60 : span > 80 ? 30 : span > 30 ? 10 : span > 10 ? 5 : span > 4 ? 2 : 1;
+  for (let t = Math.ceil(viewStart/step)*step; t <= viewEnd; t += step)
+    ctx.fillText(t.toFixed(0)+'s', tX(t), H - 2);
+
+  // Label bands — each label can have a turn layer (top half) and/or hill layer (bottom half)
+  const showTurns = document.getElementById('show-turns')?.checked ?? true;
+  const showHills = document.getElementById('show-hills')?.checked ?? true;
+  const showStraight = document.getElementById('show-straight')?.checked ?? true;
+
+  labels.forEach(lbl => {
+    // Skip if focus mode is on AND this isn't the selected label
+    if (focusMode && selectedId !== null && lbl.id !== selectedId) return;
+
+    const x1 = tX(lbl.tStart), x2 = tX(lbl.tEnd ?? lbl.tStart);
+    const lx = Math.min(x1, x2), lw = Math.max(Math.abs(x2 - x1), 3);
+    const isSel = selectedId === lbl.id;
+
+    // Decide which layers to draw for this label
+    const drawTurn = lbl.turn && showTurns;
+    const drawHill = lbl.hill && showHills;
+    const drawStraight = lbl.straight && showStraight;
+
+    if (!drawTurn && !drawHill && !drawStraight) return;
+
+    // If both layers are present: turn = top half, hill = bottom half
+    // If only one layer: it fills full height
+    // If straight: green full height
+    if (drawTurn && drawHill){
+      const tc = turnColor(lbl), hc = hillColor(lbl);
+      ctx.fillStyle = tc + '1f'; ctx.fillRect(lx, 0, lw, H/2);
+      ctx.fillStyle = hc + '1f'; ctx.fillRect(lx, H/2, lw, H/2);
+      // Vertical edges (combined gradient feel)
+      ctx.strokeStyle = (isSel ? tc : tc + '80'); ctx.lineWidth = isSel ? 1.5 : 1;
+      ctx.beginPath(); ctx.moveTo(x1, 0); ctx.lineTo(x1, H); ctx.stroke();
+      if (lbl.tEnd != null){ ctx.beginPath(); ctx.moveTo(x2, 0); ctx.lineTo(x2, H); ctx.stroke(); }
+      // Thin divider between layers
+      ctx.strokeStyle = '#333'; ctx.lineWidth = 0.5;
+      ctx.beginPath(); ctx.moveTo(lx, H/2); ctx.lineTo(lx+lw, H/2); ctx.stroke();
+    } else {
+      let col = drawStraight ? '#22c55e' : drawTurn ? turnColor(lbl) : hillColor(lbl);
+      ctx.fillStyle = col + '1f'; ctx.fillRect(lx, 0, lw, H);
+      ctx.strokeStyle = col + (isSel ? 'ff' : '80'); ctx.lineWidth = isSel ? 1.5 : 1;
+      ctx.beginPath(); ctx.moveTo(x1, 0); ctx.lineTo(x1, H); ctx.stroke();
+      if (lbl.tEnd != null){ ctx.beginPath(); ctx.moveTo(x2, 0); ctx.lineTo(x2, H); ctx.stroke(); }
+    }
+
+    // Annotations on the primary (gz) chart
+    if (m.primary){
+      ctx.font = 'bold 9px JetBrains Mono'; ctx.textAlign = 'left';
+      let yo = 12;
+      if (drawTurn){
+        ctx.fillStyle = turnColor(lbl);
+        const tag = lbl.turn.dir === 'left' ? '◄ L' : '► R';
+        ctx.fillText(tag + ' ' + Math.abs(lbl.turn.angleDeg).toFixed(0)+'°', x1 + 3, yo);
+        yo += 11;
+      }
+      if (drawHill){
+        ctx.fillStyle = hillColor(lbl);
+        const tag = lbl.hill.dir === 'up' ? '▲' : '▼';
+        ctx.fillText(tag + ' ' + Math.abs(lbl.hill.angleDeg).toFixed(0)+'°', x1 + 3, yo);
+      }
+      if (drawStraight){
+        ctx.fillStyle = '#22c55e';
+        ctx.fillText('— RAV', x1 + 3, yo);
+      }
+    }
+  });
+
+  // Drag preview
+  if (dragState && dragState.active && dragState.tEnd !== null){
+    const x1 = tX(dragState.tStart), x2 = tX(dragState.tEnd);
+    const col = CAT[currentCat].color;
+    ctx.fillStyle = col + '22';
+    ctx.fillRect(Math.min(x1,x2), 0, Math.abs(x2-x1), H);
+    ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.setLineDash([4,3]);
+    ctx.strokeRect(Math.min(x1,x2), 0, Math.abs(x2-x1), H);
+    ctx.setLineDash([]);
+  }
+
+  // Signal line — decimate if too many points fit per pixel
+  ctx.strokeStyle = m.color; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  const n = hi - lo;
+  const stride = Math.max(1, Math.floor(n / (cW * 2)));
+  let first = true;
+  for (let i = lo; i < hi; i += stride){
+    const x = tX(T[i]), y = vY(D[i]);
+    if (first){ ctx.moveTo(x, y); first = false; } else ctx.lineTo(x, y);
+  }
+  // Always include the very last visible sample
+  if ((hi-1-lo) % stride !== 0){
+    const x = tX(T[hi-1]), y = vY(D[hi-1]);
+    ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+function formatNum(v){
+  const a = Math.abs(v);
+  if (a >= 10000) return v.toExponential(0);
+  if (a >= 1000) return v.toFixed(0);
+  if (a >= 100) return v.toFixed(0);
+  if (a >= 10) return v.toFixed(1);
+  return v.toFixed(2);
+}
+
+function lowerBound(arr, target){
+  let lo = 0, hi = arr.length;
+  while (lo < hi){ const m = (lo + hi) >> 1; if (arr[m] < target) lo = m + 1; else hi = m; }
+  return lo;
+}
+function upperBound(arr, target){
+  let lo = 0, hi = arr.length;
+  while (lo < hi){ const m = (lo + hi) >> 1; if (arr[m] <= target) lo = m + 1; else hi = m; }
+  return lo;
+}
+
+// ── MOUSE INTERACTIONS ────────────────────────────────────────────────────────
+function xToT(e, cv){
+  const rect = cv.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  // cv.width is intrinsic, rect.width is rendered — they should match because we set
+  // cv.width = column width and CSS makes canvas width:100%. Use rect.width for safety.
+  const innerW = rect.width - PL - PR;
+  return viewStart + ((x - PL) / innerW) * (viewEnd - viewStart);
+}
+
+function nearestVal(sensorKey, ch, t){
+  const T = SENSOR[sensorKey].t, D = SENSOR[sensorKey][ch];
+  if (!T.length) return 0;
+  const idx = lowerBound(T, t);
+  if (idx === 0) return D[0];
+  if (idx >= T.length) return D[T.length - 1];
+  return Math.abs(T[idx]-t) < Math.abs(T[idx-1]-t) ? D[idx] : D[idx-1];
+}
+
+function updateCursor(t){
+  document.getElementById('cur-t').textContent = t.toFixed(2);
+  document.getElementById('cur-gz').textContent = nearestVal('gyro','z',t).toFixed(2);
+  document.getElementById('cur-gy').textContent = nearestVal('gyro','y',t).toFixed(2);
+  Object.keys(CHART_MAP).forEach(cid => {
+    const m = CHART_MAP[cid];
+    const v = nearestVal(m.s, m.ch, t);
+    const el = document.getElementById(m.lv);
+    if (el) el.textContent = Math.abs(v) < 100 ? v.toFixed(2) : v.toFixed(0);
+  });
+}
+
+function clampView(){
+  const sp = viewEnd - viewStart;
+  if (viewStart < 0){ viewStart = 0; viewEnd = Math.min(sp, DURATION); }
+  if (viewEnd > DURATION){ viewEnd = DURATION; viewStart = Math.max(0, DURATION-sp); }
+}
+
+function attachAllEvents(){
+  Object.keys(CHART_MAP).forEach(cid => {
+    const cv = document.getElementById(cid);
+    if (!cv) return;
+
+    cv.addEventListener('mousemove', e => {
+      if (!dataLoaded) return;
+      const t = xToT(e, cv);
+      updateCursor(t);
+      if (dragState && dragState.active){
+        dragState.tEnd = Math.max(0, Math.min(DURATION, t));
+        renderAll();
+      }
+      if (panState){
+        const dt = t - panState.t0;
+        viewStart = panState.vs - dt; viewEnd = panState.ve - dt;
+        clampView(); renderAll();
+      }
+    });
+
+    cv.addEventListener('mousedown', e => {
+      if (!dataLoaded) return;
+      const t = xToT(e, cv);
+      if (e.button === 2){
+        e.preventDefault();
+        // Right-click pan exits focus mode
+        if (focusMode){
+          focusMode = false;
+          document.getElementById('btn-focus').classList.remove('focus-on');
+        }
+        panState = { t0: t, vs: viewStart, ve: viewEnd };
+        return;
+      }
+      dragState = { tStart: Math.max(0, Math.min(DURATION,t)), tEnd: null, active: true };
+    });
+
+    cv.addEventListener('mouseup', e => {
+      if (e.button === 2){ panState = null; return; }
+      if (!dragState || !dragState.active) return;
+      const t = xToT(e, cv);
+      const tEnd = Math.max(0, Math.min(DURATION, t));
+      dragState.active = false;
+      const tS = Math.min(dragState.tStart, tEnd);
+      const tE = Math.max(dragState.tStart, tEnd);
+      dragState = null;
+      if (tE - tS < 0.2) openPopup(tS, null);
+      else openPopup(tS, tE);
+      renderAll();
+    });
+
+    cv.addEventListener('mouseleave', () => { if (dragState) dragState.active = false; panState = null; });
+    cv.addEventListener('contextmenu', e => e.preventDefault());
+
+    cv.addEventListener('wheel', e => {
+      if (!dataLoaded) return;
+      e.preventDefault();
+      // Zooming exits focus mode
+      if (focusMode){
+        focusMode = false;
+        document.getElementById('btn-focus').classList.remove('focus-on');
+      }
+      const t = xToT(e, cv);
+      const f = e.deltaY > 0 ? 1.18 : 0.85;
+      let sp = (viewEnd - viewStart) * f;
+      sp = Math.max(0.5, Math.min(DURATION, sp));
+      const r = (t - viewStart) / (viewEnd - viewStart);
+      viewStart = t - r*sp; viewEnd = t + (1-r)*sp;
+      clampView(); renderAll();
+    }, { passive: false });
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z'){ e.preventDefault(); undo(); }
+    if (e.key === 'Escape'){ closePopup(); }
+  });
+}
+
+function resetZoom(){ if (!dataLoaded) return; viewStart = 0; viewEnd = DURATION; renderAll(); }
+
+// ── ANGLE CALC ────────────────────────────────────────────────────────────────
+function integrate(sensorKey, ch, tS, tE){
+  const T = SENSOR[sensorKey].t, D = SENSOR[sensorKey][ch];
+  let a = 0;
+  const lo = lowerBound(T, tS), hi = upperBound(T, tE);
+  for (let i = Math.max(1, lo); i < hi; i++) a += D[i] * (T[i] - T[i-1]);
+  return a;
+}
+function autoIntensity(deg){ const a = Math.abs(deg); return a < 30 ? 'blag' : a < 60 ? 'srednji' : a < 90 ? 'oster' : 'zelo_oster'; }
+
+// ── POPUP ─────────────────────────────────────────────────────────────────────
+function togglePopSection(which){
+  const checked = document.getElementById('pop-has-'+which).checked;
+  document.getElementById('pop-'+which+'-fields').style.display = checked ? 'block' : 'none';
+  // If turning a layer ON, clear the "straight" checkbox
+  if (checked) document.getElementById('pop-is-straight').checked = false;
+}
+
+// Wire the "straight" checkbox so it disables both layers
+document.addEventListener('change', e => {
+  if (e.target.id === 'pop-is-straight' && e.target.checked){
+    document.getElementById('pop-has-turn').checked = false;
+    document.getElementById('pop-has-hill').checked = false;
+    document.getElementById('pop-turn-fields').style.display = 'none';
+    document.getElementById('pop-hill-fields').style.display = 'none';
+  }
+});
+
+function openPopup(tS, tE){
+  const tE2 = tE ?? tS + 0.05;
+  const turnAngle = integrate('gyro','z',tS,tE2);
+  const hillAngle = integrate('gyro','y',tS,tE2);
+
+  // Pre-fill based on the currently selected toolbar category, but USER can change anything
+  document.getElementById('pop-title').textContent = 'Označi segment';
+  document.getElementById('pop-sub').textContent =
+    tS.toFixed(2) + 's → ' + (tE ?? tS).toFixed(2) + 's (' +
+    (tE ? (tE-tS).toFixed(2)+'s' : 'točka') + ')';
+
+  // Auto-displayed values
+  document.getElementById('pop-auto-turn').textContent = turnAngle.toFixed(1)+'°';
+  document.getElementById('pop-auto-hill').textContent = hillAngle.toFixed(1)+'°';
+
+  // Default state: enable layers based on toolbar pre-selection
+  const isTurn = currentCat === 'turn_left' || currentCat === 'turn_right';
+  const isHill = currentCat === 'hill';
+  const isStraight = currentCat === 'straight';
+
+  document.getElementById('pop-has-turn').checked = isTurn;
+  document.getElementById('pop-has-hill').checked = isHill;
+  document.getElementById('pop-is-straight').checked = isStraight;
+  document.getElementById('pop-turn-fields').style.display = isTurn ? 'block' : 'none';
+  document.getElementById('pop-hill-fields').style.display = isHill ? 'block' : 'none';
+
+  // Pre-set turn direction from toolbar selection or from sign of integrated yaw
+  let turnDir;
+  if (currentCat === 'turn_left') turnDir = 'left';
+  else if (currentCat === 'turn_right') turnDir = 'right';
+  else turnDir = turnAngle >= 0 ? 'left' : 'right';
+  document.querySelector(`input[name=turn-dir][value=${turnDir}]`).checked = true;
+  document.getElementById('pop-turn-angle').value = Math.abs(turnAngle).toFixed(1);
+
+  // Pre-set hill direction from sign of integrated pitch
+  const hillDir = hillAngle >= 0 ? 'up' : 'down';
+  document.querySelector(`input[name=hill-dir][value=${hillDir}]`).checked = true;
+  document.getElementById('pop-hill-angle').value = Math.abs(hillAngle).toFixed(1);
+
+  pending = { tS, tE, turnAngle, hillAngle };
+  document.getElementById('popup').style.display = 'flex';
+}
+
+function closePopup(){ document.getElementById('popup').style.display = 'none'; pending = null; }
+
+function confirmLabel(){
+  if (!pending) return;
+  const hasTurn = document.getElementById('pop-has-turn').checked;
+  const hasHill = document.getElementById('pop-has-hill').checked;
+  const isStraight = document.getElementById('pop-is-straight').checked;
+
+  if (!hasTurn && !hasHill && !isStraight){
+    toast('Izberi vsaj eno plast (ovinek, hrib ali ravnina)', true);
+    return;
+  }
+
+  let turn = null, hill = null;
+  if (hasTurn){
+    const dirEl = document.querySelector('input[name=turn-dir]:checked');
+    if (!dirEl){ toast('Izberi smer ovinka', true); return; }
+    const angle = parseFloat(document.getElementById('pop-turn-angle').value) || 0;
+    turn = { dir: dirEl.value, angleDeg: angle, intensity: autoIntensity(angle) };
+  }
+  if (hasHill){
+    const dirEl = document.querySelector('input[name=hill-dir]:checked');
+    if (!dirEl){ toast('Izberi smer hriba', true); return; }
+    const angle = parseFloat(document.getElementById('pop-hill-angle').value) || 0;
+    hill = { dir: dirEl.value, angleDeg: angle, intensity: autoIntensity(angle) };
+  }
+
+  labels.push({
+    id: ++labelId,
+    tStart: pending.tS,
+    tEnd: pending.tE,
+    turn, hill,
+    straight: isStraight && !hasTurn && !hasHill,
+  });
+  labels.sort((a,b) => a.tStart - b.tStart);
+  document.getElementById('popup').style.display = 'none';
+  pending = null; renderAll(); updateSidebar();
+}
+
+// ── SIDEBAR ───────────────────────────────────────────────────────────────────
+function showTab(t){
+  document.querySelectorAll('.sb-tab').forEach((b,i) => b.classList.toggle('on', ['labels','explainer'][i]===t));
+  document.getElementById('tp-labels').classList.toggle('on', t==='labels');
+  document.getElementById('tp-explainer').classList.toggle('on', t==='explainer');
+}
+
+function updateSidebar(){
+  const list = document.getElementById('llist');
+  document.getElementById('lcount').textContent = labels.length;
+  if (!labels.length){ list.innerHTML = '<div class="no-labels">Še ni oznak.</div>'; return; }
+  const imap = { blag:'blag', srednji:'SREDNJI', oster:'OSTER', zelo_oster:'ZELO OSTER' };
+
+  list.innerHTML = labels.map(l => {
+    const te = l.tEnd != null ? l.tEnd.toFixed(2) : l.tStart.toFixed(2);
+    const dur = l.tEnd ? (l.tEnd-l.tStart).toFixed(1)+'s' : 'točka';
+
+    // Build the multi-layer description
+    const tags = [];
+    if (l.turn){
+      const dir = l.turn.dir === 'left' ? 'Levi' : 'Desni';
+      const col = l.turn.dir === 'left' ? '#3b82f6' : '#ef4444';
+      tags.push(`<span class="li-tag" style="background:${col}33;color:${col}">${dir} ${Math.abs(l.turn.angleDeg).toFixed(0)}°</span>`);
+    }
+    if (l.hill){
+      const dir = l.hill.dir === 'up' ? 'Navzgor' : 'Navzdol';
+      tags.push(`<span class="li-tag" style="background:#f59e0b33;color:#f59e0b">${dir} ${Math.abs(l.hill.angleDeg).toFixed(0)}°</span>`);
+    }
+    if (l.straight){
+      tags.push(`<span class="li-tag" style="background:#22c55e33;color:#22c55e">Ravnina</span>`);
+    }
+
+    // Border color: turn > hill > straight
+    const border = primaryColor(l);
+
+    // Intensity summary (worst of any present layer)
+    let intensity = '';
+    const ints = [l.turn?.intensity, l.hill?.intensity].filter(Boolean);
+    if (ints.length) intensity = ints.map(i => imap[i] || i).join(' · ');
+
+    return `<div class="litem${selectedId===l.id?' sel':''}" style="border-color:${border}" onclick="selLabel(${l.id}, event)">
+      <div class="li-info">
+        <div class="li-time">${l.tStart.toFixed(2)}s → ${te}s (${dur})</div>
+        <div class="li-tags">${tags.join('')}</div>
+        ${intensity ? `<div class="li-angle">${intensity}</div>` : ''}
+      </div>
+      <button class="li-del" onclick="event.stopPropagation();delLabel(${l.id})">✕</button>
+    </div>`;
+  }).join('');
+}
+
+function selLabel(id, ev){
+  const wasSelected = selectedId === id;
+  selectedId = wasSelected ? null : id;
+
+  if (selectedId !== null){
+    const l = labels.find(x => x.id === id);
+    if (l && l.tEnd != null){
+      // Shift+click → focus mode (lock view to interval, hide other labels)
+      // Plain click → just zoom around the interval
+      if (ev && ev.shiftKey){
+        focusMode = true;
+        viewStart = l.tStart;
+        viewEnd = l.tEnd;
+        document.getElementById('btn-focus').classList.add('focus-on');
+        toast('Focus: prikazan samo izbrani interval');
+      } else if (focusMode){
+        // Already in focus mode — switching the focused label
+        viewStart = l.tStart;
+        viewEnd = l.tEnd;
+      } else {
+        // Plain click: zoom around with padding
+        const span = l.tEnd - l.tStart;
+        const pad = Math.max(span * 0.5, 2);
+        viewStart = Math.max(0, l.tStart - pad);
+        viewEnd = Math.min(DURATION, l.tEnd + pad);
+      }
+    }
+  } else {
+    // Deselected — leave focus mode if it was on
+    if (focusMode){
+      focusMode = false;
+      document.getElementById('btn-focus').classList.remove('focus-on');
+    }
+  }
+
+  updateSidebar(); renderAll();
+}
+
+function toggleFocus(){
+  if (selectedId === null){
+    if (focusMode){
+      focusMode = false;
+      document.getElementById('btn-focus').classList.remove('focus-on');
+      renderAll();
+    } else {
+      toast('Najprej izberi segment v stranski vrstici', true);
+    }
+    return;
+  }
+  const l = labels.find(x => x.id === selectedId);
+  if (!l || l.tEnd == null) return;
+  focusMode = !focusMode;
+  if (focusMode){
+    viewStart = l.tStart;
+    viewEnd = l.tEnd;
+    document.getElementById('btn-focus').classList.add('focus-on');
+    toast('Focus mode: vidim samo izbrani interval');
+  } else {
+    document.getElementById('btn-focus').classList.remove('focus-on');
+    // Restore a comfortable zoom around the segment
+    const span = l.tEnd - l.tStart;
+    const pad = Math.max(span * 0.5, 2);
+    viewStart = Math.max(0, l.tStart - pad);
+    viewEnd = Math.min(DURATION, l.tEnd + pad);
+  }
+  renderAll();
+}
+
+function delLabel(id){ labels = labels.filter(l=>l.id!==id); if (selectedId===id){ selectedId=null; if (focusMode){ focusMode=false; document.getElementById('btn-focus').classList.remove('focus-on'); } } renderAll(); updateSidebar(); }
+function undo(){ if (labels.length){ labels.pop(); renderAll(); updateSidebar(); toast('Razveljavljeno'); } }
+function clearAll(){ if (!labels.length || confirm('Počisti vse oznake?')){ labels=[]; selectedId=null; focusMode=false; document.getElementById('btn-focus').classList.remove('focus-on'); renderAll(); updateSidebar(); } }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NPZ IMPORT — proper ZIP64 support
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadNPZ(input){
+  const file = input.files[0]; if (!file) return; input.value = '';
+  document.getElementById('fname').textContent = '⏳ ' + file.name;
+  try {
+    const buf = await file.arrayBuffer();
+    const arrs = await parseNPZ(buf);
+    if (!arrs.gyro) throw new Error('Manjka gyro array v NPZ');
+
+    fillSensor(arrs.gyro, 'gyro', 1/131);
+    if (arrs.accel) fillSensor(arrs.accel, 'accel', 1);
+    else clearSensor('accel');
+    if (arrs.mag) fillSensor(arrs.mag, 'mag', 1);
+    else clearSensor('mag');
+
+    DURATION = SENSOR.gyro.t[SENSOR.gyro.t.length - 1] || 1;
+    viewStart = 0; viewEnd = DURATION;
+    labels = []; selectedId = null; dataLoaded = true;
+    focusMode = false;
+    document.getElementById('btn-focus').classList.remove('focus-on');
+
+    document.getElementById('fname').textContent = file.name;
+    document.getElementById('hn-g').textContent = arrs.gyro.length / 4;
+    document.getElementById('hn-a').textContent = arrs.accel ? arrs.accel.length/4 : '—';
+    document.getElementById('hn-m').textContent = arrs.mag   ? arrs.mag.length/4   : '—';
+    document.getElementById('empty-overlay').classList.add('gone');
+
+    sizeAllCanvases();
+    renderAll();
+    updateSidebar();
+    toast(`Uvoženo: ${arrs.gyro.length/4} gyro · ${arrs.accel?arrs.accel.length/4:0} accel · ${arrs.mag?arrs.mag.length/4:0} mag`);
+  } catch(e){
+    document.getElementById('fname').textContent = '❌ ' + (e.message || 'napaka');
+    console.error(e);
+    toast('Napaka: ' + e.message, true);
+  }
+}
+
+function clearSensor(skey){
+  const s = SENSOR[skey];
+  Object.keys(s).forEach(k => s[k].length = 0);
+}
+
+function fillSensor(raw, skey, scale){
+  const n = raw.length / 4, t0 = raw[0];
+  const s = SENSOR[skey];
+  Object.keys(s).forEach(k => s[k].length = 0);
+
+  // Sensible downsample target — keeps render fast even on huge files
+  // Aim: at most 12000 points per channel for the chart
+  const targetPts = 12000;
+  const stride = Math.max(1, Math.floor(n / targetPts));
+
+  for (let i = 0; i < n; i += stride){
+    s.t.push((raw[i*4] - t0) / 1000);
+    s.x.push(raw[i*4+1] * scale);
+    s.y.push(raw[i*4+2] * scale);
+    s.z.push(raw[i*4+3] * scale);
+  }
+
+  if (skey === 'gyro'){
+    s.heading.push(0);
+    for (let i = 1; i < s.t.length; i++)
+      s.heading.push(s.heading[i-1] + s.z[i] * (s.t[i]-s.t[i-1]));
+  }
+  if (skey === 'accel'){
+    for (let i = 0; i < s.t.length; i++)
+      s.mag.push(Math.sqrt(s.x[i]**2 + s.y[i]**2 + s.z[i]**2));
+  }
+  if (skey === 'mag'){
+    for (let i = 0; i < s.t.length; i++)
+      s.compass.push(Math.atan2(s.y[i], s.x[i]) * 180 / Math.PI);
+  }
+}
+
+// ── ZIP/NPZ parser with ZIP64 support ────────────────────────────────────────
+async function parseNPZ(buf){
+  const u8 = new Uint8Array(buf), dv = new DataView(buf), res = {};
+  let pos = 0;
+  while (pos <= u8.length - 4){
+    const sig = dv.getUint32(pos, true);
+    // Stop at central directory record
+    if (sig === 0x02014b50 || sig === 0x06054b50 || sig === 0x06064b50) break;
+    if (sig !== 0x04034b50){ pos++; continue; }
+
+    const flags = dv.getUint16(pos+6, true);
+    const compr = dv.getUint16(pos+8, true);
+    let csz = dv.getUint32(pos+18, true);     // compressed size
+    let usz = dv.getUint32(pos+22, true);     // uncompressed size
+    const fnl = dv.getUint16(pos+26, true);
+    const exl = dv.getUint16(pos+28, true);
+    const fn  = new TextDecoder().decode(u8.slice(pos+30, pos+30+fnl));
+
+    // Walk extra fields, looking for ZIP64 (header id 0x0001)
+    const exStart = pos + 30 + fnl;
+    let exPos = exStart;
+    const exEnd = exStart + exl;
+    while (exPos + 4 <= exEnd){
+      const id = dv.getUint16(exPos, true);
+      const sz = dv.getUint16(exPos+2, true);
+      if (id === 0x0001){
+        // ZIP64: only the fields that were 0xFFFFFFFF in the local header are present, in fixed order:
+        // uncompressed size (8), compressed size (8), local header offset (8), disk start (4)
+        let q = exPos + 4;
+        if (usz === 0xFFFFFFFF && q + 8 <= exPos + 4 + sz){
+          usz = readU64(dv, q); q += 8;
+        }
+        if (csz === 0xFFFFFFFF && q + 8 <= exPos + 4 + sz){
+          csz = readU64(dv, q); q += 8;
+        }
+      }
+      exPos += 4 + sz;
+    }
+
+    const ds = pos + 30 + fnl + exl;
+
+    // Bit 3 of flags = "data descriptor follows" (sizes were 0 in header).
+    // For NPZ produced by numpy.savez this is rarely used, but handle gracefully.
+    if ((flags & 0x8) && csz === 0){
+      // Scan for data descriptor signature 0x08074b50 — fragile, but a fallback.
+      let scan = ds;
+      while (scan < u8.length - 4){
+        if (dv.getUint32(scan, true) === 0x08074b50){
+          csz = scan - ds; break;
+        }
+        scan++;
+      }
+    }
+
+    const cd = u8.subarray(ds, ds + csz);
+    let raw;
+    if (compr === 0){
+      // "stored" — plain bytes. Copy to fresh buffer to ensure 4-byte alignment for Float32Array view.
+      raw = new Uint8Array(cd.byteLength);
+      raw.set(cd);
+    } else if (compr === 8){
+      raw = await inflateRaw(cd);
+    } else {
+      pos = ds + csz; continue;
+    }
+
+    if (fn.endsWith('.npy')){
+      try {
+        res[fn.replace('.npy','')] = parseNPY(raw, usz);
+      } catch (e){
+        console.warn(`Skipping ${fn}: ${e.message}`);
+      }
+    }
+    pos = ds + csz;
+  }
+  return res;
+}
+
+function readU64(dv, offset){
+  // Reads little-endian 64-bit unsigned int as a JS number (safe up to 2^53).
+  const lo = dv.getUint32(offset, true);
+  const hi = dv.getUint32(offset + 4, true);
+  return hi * 0x100000000 + lo;
+}
+
+async function inflateRaw(cd){
+  if (typeof DecompressionStream === 'undefined')
+    throw new Error('Brskalnik ne podpira DecompressionStream');
+  const ds = new DecompressionStream('deflate-raw');
+  const w = ds.writable.getWriter();
+  const r = ds.readable.getReader();
+  // Need to pass an ArrayBuffer view to write — pass as a fresh Uint8Array
+  w.write(new Uint8Array(cd)).catch(()=>{});
+  w.close().catch(()=>{});
+  const chunks = [];
+  while (true){ const {done,value} = await r.read(); if (done) break; chunks.push(value); }
+  const tot = chunks.reduce((a,c) => a+c.length, 0);
+  const out = new Uint8Array(tot); let off = 0;
+  for (const c of chunks){ out.set(c, off); off += c.length; }
+  return out;
+}
+
+function parseNPY(u8, expectedBytes){
+  if (u8.length < 10 || u8[0] !== 0x93) throw new Error('Not NPY');
+  const maj = u8[6];
+  const hl = maj === 1 ? (u8[8] | (u8[9] << 8))
+                       : (u8[8] | (u8[9] << 8) | (u8[10] << 16) | (u8[11] << 24));
+  const ho = maj === 1 ? 10 : 12;
+  const hdr = new TextDecoder('latin1').decode(u8.slice(ho, ho + hl));
+
+  // Validate dtype — we only support little-endian float32
+  const descrM = hdr.match(/'descr'\s*:\s*'([^']+)'/);
+  const descr = descrM ? descrM[1] : '<f4';
+  if (descr !== '<f4' && descr !== '|f4' && descr !== '=f4')
+    throw new Error('Nepodprt dtype: ' + descr + ' (potreben <f4)');
+
+  // Parse shape: tuple may be 1D ((N,)) or 2D ((rows, cols))
+  const shapeM = hdr.match(/'shape'\s*:\s*\(([^)]*)\)/);
+  if (!shapeM) throw new Error('Manjka shape v NPY header');
+  const shape = shapeM[1].split(',').map(s => s.trim()).filter(s => s.length > 0).map(s => parseInt(s, 10));
+  const total = shape.reduce((a,b) => a*b, 1);
+
+  const dataOffset = ho + hl;
+
+  // Need 4-byte alignment for Float32Array view; if buffer isn't aligned, copy.
+  const absOffset = u8.byteOffset + dataOffset;
+  if (absOffset % 4 !== 0){
+    const copy = new Uint8Array(total * 4);
+    copy.set(u8.subarray(dataOffset, dataOffset + total * 4));
+    return new Float32Array(copy.buffer);
+  }
+  return new Float32Array(u8.buffer, absOffset, total);
+}
+
+// ── JSON IMPORT / EXPORT ──────────────────────────────────────────────────────
+async function loadJSON(input){
+  const file = input.files[0]; if (!file) return; input.value='';
+  try {
+    const data = JSON.parse(await file.text());
+    if (!data.labels){ toast('Neveljaven format JSON', true); return; }
+
+    let imported = 0;
+    data.labels.forEach(l => {
+      // Detect format: new (turn/hill objects) or legacy (single category)
+      if (l.turn !== undefined || l.hill !== undefined || l.straight !== undefined){
+        // New format
+        labels.push({
+          id: ++labelId,
+          tStart: l.t_start,
+          tEnd: l.t_end,
+          turn: l.turn || null,
+          hill: l.hill || null,
+          straight: !!l.straight,
+        });
+      } else if (l.category){
+        // Legacy format → migrate
+        const newL = { id: ++labelId, tStart: l.t_start, tEnd: l.t_end, turn:null, hill:null, straight:false };
+        if (l.category === 'turn_left'){
+          newL.turn = { dir:'left', angleDeg: Math.abs(l.angle_deg||0), intensity: l.intensity||'blag' };
+        } else if (l.category === 'turn_right'){
+          newL.turn = { dir:'right', angleDeg: Math.abs(l.angle_deg||0), intensity: l.intensity||'blag' };
+        } else if (l.category === 'hill'){
+          const dir = (l.subtype && /navzdol/i.test(l.subtype)) ? 'down' : 'up';
+          newL.hill = { dir, angleDeg: Math.abs(l.angle_deg||0), intensity: l.intensity||'blag' };
+        } else if (l.category === 'straight'){
+          newL.straight = true;
+        }
+        labels.push(newL);
+      } else return;
+      imported++;
+    });
+    labels.sort((a,b) => a.tStart - b.tStart);
+    renderAll(); updateSidebar();
+    toast(`Uvoženo ${imported} oznak`);
+  } catch(e){ toast('Napaka: '+e.message, true); }
+}
+
+function exportJSON(){
+  const out = {
+    file: document.getElementById('fname').textContent,
+    exported: new Date().toISOString(),
+    schema: 'autodna-v2-multilayer',
+    labels: labels.map(l => ({
+      t_start: l.tStart,
+      t_end: l.tEnd,
+      turn: l.turn,    // {dir, angleDeg, intensity} or null
+      hill: l.hill,    // {dir, angleDeg, intensity} or null
+      straight: l.straight,
+    }))
+  };
+  dl(JSON.stringify(out, null, 2), fn()+'_labels.json', 'application/json');
+  toast('JSON izvožen');
+}
+
+function exportCSV(){
+  if (!dataLoaded){ toast('Najprej uvozi NPZ', true); return; }
+  // Multi-label CSV: turn_class (0=none, 1=L, 2=R) and hill_class (0=none, 1=up, 2=down)
+  // Plus signed angles for regression heads.
+  const T = SENSOR.gyro.t;
+  const turnClass = new Array(T.length).fill(0);
+  const hillClass = new Array(T.length).fill(0);
+  const turnAngle = new Array(T.length).fill(0);
+  const hillAngle = new Array(T.length).fill(0);
+  const isStraight = new Array(T.length).fill(0);
+
+  labels.forEach(l => {
+    const te = l.tEnd ?? l.tStart + .01;
+    const lo = lowerBound(T, l.tStart), hi = upperBound(T, te);
+    for (let i = lo; i < hi; i++){
+      if (l.turn){
+        turnClass[i] = l.turn.dir === 'left' ? 1 : 2;
+        turnAngle[i] = (l.turn.dir === 'left' ? 1 : -1) * Math.abs(l.turn.angleDeg);
+      }
+      if (l.hill){
+        hillClass[i] = l.hill.dir === 'up' ? 1 : 2;
+        hillAngle[i] = (l.hill.dir === 'up' ? 1 : -1) * Math.abs(l.hill.angleDeg);
+      }
+      if (l.straight) isStraight[i] = 1;
+    }
+  });
+
+  let csv = 't_sec,turn_class,hill_class,turn_angle_deg,hill_angle_deg,is_straight\n';
+  for (let i = 0; i < T.length; i++){
+    csv += T[i].toFixed(3)+','+turnClass[i]+','+hillClass[i]+','+turnAngle[i].toFixed(1)+','+hillAngle[i].toFixed(1)+','+isStraight[i]+'\n';
+  }
+  dl(csv, fn()+'_label_vector.csv', 'text/csv');
+  toast(`CSV izvožen (${T.length} vrstic, multi-label)`);
+}
+
+function fn(){ return document.getElementById('fname').textContent.replace('.npz','').replace(/[^a-zA-Z0-9_-]/g,'_') || 'autodna'; }
+function dl(content, filename, type){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], {type}));
+  a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+attachAllEvents();
+sizeAllCanvases();
+renderAll();
+
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { sizeAllCanvases(); renderAll(); }, 80);
+});
+</script>
+</body>
+</html>
