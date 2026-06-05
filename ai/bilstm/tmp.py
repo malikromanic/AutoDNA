@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Created on Thu May 14 16:45:16 2026
  
@@ -14,13 +13,14 @@ import time
 import random
 from pathlib import Path
 from torch.utils.data import Dataset, DataLoader
+from torch.nn.utils.rnn import pad_sequence
  
 #hiperparametri
-num_layers   = 2
-hidden_size  = 64
+num_layers   = 2  #2
+hidden_size  = 64  #64
 num_outputs  = 7        
-learning_rate = 0.0001
-batch_size   = 1        
+learning_rate = 0.0005   #0.0001
+batch_size   = 8  
 num_epochs   = 200
 
 
@@ -31,41 +31,26 @@ MAX_ANGLE_HILL = 15
 def load_training_sample(filepath):
     """
     Load one training sample from a .npz file.
- 
-    :param filepath: Path to the .npz file with preprocessed sensor data.
-    :returns: Tuple (accel, gyro, mag, y) where accel/gyro/mag are RGB
-              spectrograms of shape (F, T, 3) normalized to [0, 1],
-              and y is the label matrix of shape (T, 7).
+    Only loads accel and gyro, drops mag as it adds noise for dynamic events.
     """
     data = np.load(filepath)
-    accel = data['accel_rgb'].astype(np.float32) / 255.0   #(F, T, 3)
+    accel = data['accel_rgb'].astype(np.float32) / 255.0  # (F, T, 3)
     gyro  = data['gyro_rgb'].astype(np.float32)  / 255.0
-    mag   = data['mag_rgb'].astype(np.float32)   / 255.0
-    y     = data['labels']                                 #(T, 7)
-    
-    #print(f"accel: {accel.shape}, gyro: {gyro.shape}, mag: {mag.shape}, y: {y.shape}")
- 
-    return accel, gyro, mag, y
- 
- 
-def flatten_sensors(accel, gyro, mag):
+    y     = data['labels']                                 # (T, 7)
+    return accel, gyro, y
+
+
+def flatten_sensors(accel, gyro):
     """
-    Combine RGB spectrograms from all three sensors into one time series.
- 
-    Each sensor has shape (F, T, 3). The frequency and color dimensions
-    are flattened into one vector and transposed to (T, F*3).
-    All three sensors are concatenated along the time axis.
- 
-    :param accel: Accelerometer RGB spectrogram of shape (F, T, 3).
-    :param gyro: Gyroscope RGB spectrogram of shape (F, T, 3).
-    :param mag: Magnetometer RGB spectrogram of shape (F, T, 3).
-    :returns: Matrix of shape (T, F*9) where each row represents
-              one timestep with all sensor values.
+    Use only the most informative axes:
+    - gyro all 3 channels (X,Y,Z packed as R,G,B) — Z is yaw for turns
+    - accel all 3 channels — X is pitch for hills, Z is vertical load
+    Drops mag entirely.
     """
     F, T, _ = accel.shape
-    accel_flat = accel.reshape(F*3, T).T
-    gyro_flat  = gyro.reshape(F*3, T).T
-    mag_flat   = mag.reshape(F*3, T).T
+
+    accel_flat = accel.reshape(F*3, T).T  # (T, F*3)
+    gyro_flat  = gyro.reshape(F*3, T).T   # (T, F*3)
 
     def minmax(arr):
         mn, mx = arr.min(), arr.max()
@@ -73,8 +58,7 @@ def flatten_sensors(accel, gyro, mag):
             return (arr - mn) / (mx - mn)
         return arr
 
-    # scale each sensor independently to preserve relative differences
-    return np.concatenate([minmax(accel_flat), minmax(gyro_flat), minmax(mag_flat)], axis=-1)
+    return np.concatenate([minmax(accel_flat), minmax(gyro_flat)], axis=-1)  # (T, F*6)
  
  
 class DriveDataset(Dataset):
@@ -104,15 +88,8 @@ class DriveDataset(Dataset):
         return len(self.files)
  
     def __getitem__(self, idx):
-        """
-        Load and prepare one sample by index.
- 
-        :param idx: Index of the sample in the file list.
-        :returns: Tuple (x, y) where x is a tensor of shape (T, input_size)
-                  and y is a label tensor of shape (T, 7).
-        """
-        accel, gyro, mag, y = load_training_sample(self.files[idx])
-        x = flatten_sensors(accel, gyro, mag)            
+        accel, gyro, y = load_training_sample(self.files[idx])
+        x = flatten_sensors(accel, gyro)
         return torch.tensor(x), torch.tensor(y)
     
  
@@ -139,7 +116,7 @@ class BiLSTM(nn.Module):
         super(BiLSTM, self).__init__()
         self.lstm = nn.LSTM(
             input_size, hidden_size, num_layers,
-            bidirectional=True, batch_first=True, dropout=0.3)
+            bidirectional=True, batch_first=True)
         self.dropout = nn.Dropout(0.3)
         self.fc = nn.Linear(hidden_size * 2, num_outputs)
  
@@ -163,6 +140,18 @@ class BiLSTM(nn.Module):
         out = self.fc(out)             
         #return torch.sigmoid(out)
         return out
+
+
+def pad_collate(batch):
+    # Sort batch by sequence length (descending) for packed sequences if needed
+    features = [item[0] for item in batch]
+    targets = [item[1] for item in batch]
+    
+    # Pad features with 0 and targets with 0 (unlabeled mask handles loss)
+    features_padded = pad_sequence(features, batch_first=True, padding_value=0.0)
+    targets_padded = pad_sequence(targets, batch_first=True, padding_value=0.0)
+    
+    return features_padded, targets_padded
 
 
 def get_labeled_mask(target):
@@ -207,11 +196,7 @@ def stratified_split(sample_files, val_ratio=0.2, seed=42):
     return train_files, val_files
 
 
-def compute_pos_weights(dataset, max_weight=3.0):
-    """
-    Calculate pos_weight for each binary output from training data.
-    Capped at max_weight to prevent extreme imbalance dominating loss.
-    """
+def compute_pos_weights(dataset, max_weight=2.0, min_weight=0.8):
     all_labels = []
     for i in range(len(dataset)):
         _, y = dataset[i]
@@ -224,55 +209,53 @@ def compute_pos_weights(dataset, max_weight=3.0):
     for col, name in [(0,'turn'), (3,'hill'), (6,'straight'), (1,'turn_dir'), (4,'hill_dir')]:
         pos = all_labels[:, col].sum()
         neg = (1 - all_labels[:, col]).sum()
-        pw = neg / (pos + 1e-8)
-        pw = min(max(pw.item(), 0.8), max_weight)  # keep between 0.8 and 3.0
+        pw_raw = (neg / (pos + 1e-8)).item()
+        pw = min(max(pw_raw, min_weight), max_weight)
         weights[name] = torch.tensor([pw])
-        print(f"  pos_weight {name}: {pw:.2f}  (pos={pos:.0f}, neg={neg:.0f})")
+        print(f"  pos_weight {name}: {pw:.2f} (raw={pw_raw:.2f}, pos={pos:.0f}, neg={neg:.0f})")
     
     return weights
 
 
 def masked_loss(pred, target, pw):
-    def bce_turn(p, t):
-        return nn.BCEWithLogitsLoss(pos_weight=pw['turn'])(p, t)
-    def bce_hill(p, t):
-        return nn.BCEWithLogitsLoss(pos_weight=pw['hill'])(p, t)
-    def bce_straight(p, t):
-        return nn.BCEWithLogitsLoss(pos_weight=pw['straight'])(p, t)
-    def bce_dir(p, t):
-        return nn.BCEWithLogitsLoss(pos_weight=pw['turn_dir'])(p, t)
-
-    # L1 instead of MSE for angle regression — more robust to outliers
+    bce_turn = nn.BCEWithLogitsLoss(pos_weight=pw['turn'])
+    bce_hill = nn.BCEWithLogitsLoss(pos_weight=pw['hill'])
+    bce_straight = nn.BCEWithLogitsLoss(pos_weight=pw['straight'])
+    bce_dir = nn.BCEWithLogitsLoss(pos_weight=pw['turn_dir'])
     l1 = nn.L1Loss()
-
-    pred_prob = torch.sigmoid(pred)
 
     labeled = get_labeled_mask(target)
     if not labeled.any():
-        return torch.tensor(0.0, requires_grad=True)
+        return torch.tensor(0.0, requires_grad=True, device=pred.device)
 
-    pred_l      = pred[labeled]
-    target_l    = target[labeled]
-    pred_prob_l = pred_prob[labeled]
+    pred_l   = pred[labeled]
+    target_l = target[labeled]
 
-    loss = bce_turn(pred_l[:, 0],      target_l[:, 0])
-    loss += bce_hill(pred_l[:, 3],     target_l[:, 3])
-    loss += bce_straight(pred_l[:, 6], target_l[:, 6])
+    # 1. Classification Losses (using raw logits + .view(-1) protection)
+    loss = bce_turn(pred_l[:, 0].view(-1),      target_l[:, 0].view(-1))
+    loss += bce_hill(pred_l[:, 3].view(-1),     target_l[:, 3].view(-1))
+    loss += bce_straight(pred_l[:, 6].view(-1), target_l[:, 6].view(-1))
 
+    # 2. Direction Losses
     turn_mask = target_l[:, 0] > 0.5
     if turn_mask.any():
-        loss += bce_dir(pred_l[:, 1][turn_mask], target_l[:, 1][turn_mask])
+        loss += bce_dir(pred_l[:, 1][turn_mask].view(-1), target_l[:, 1][turn_mask].view(-1))
 
     hill_mask = target_l[:, 3] > 0.5
     if hill_mask.any():
-        loss += bce_dir(pred_l[:, 4][hill_mask], target_l[:, 4][hill_mask])
+        bce_hill_dir = nn.BCEWithLogitsLoss(pos_weight=pw['hill_dir'])
+        loss += bce_hill_dir(pred_l[:, 4][hill_mask].view(-1), target_l[:, 4][hill_mask].view(-1))
 
-    # L1 loss with higher weight so angle regression competes with presence losses
+    # 3. Angle Regression Losses (keeping your functional code)
     if turn_mask.any():
-        loss += 3.0 * l1(pred_prob_l[:, 2][turn_mask], target_l[:, 2][turn_mask])
+        pred_turn_angle = torch.sigmoid(pred_l[:, 2][turn_mask])
+        loss += 1.0 * l1(pred_turn_angle, target_l[:, 2][turn_mask])   
+        #3 / 5
     if hill_mask.any():
-        loss += 3.0 * l1(pred_prob_l[:, 5][hill_mask], target_l[:, 5][hill_mask])
-
+        pred_hill_angle = torch.sigmoid(pred_l[:, 5][hill_mask])
+        loss += 1.0 * l1(pred_hill_angle, target_l[:, 5][hill_mask])
+        #3 / 5
+        
     return loss
 
 
@@ -282,15 +265,14 @@ def train_model(model, train_set, val_set, print_info):
         
     pw = compute_pos_weights(train_set)
     
-        
     start_time = time.time()
     
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-3)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=5  # mode='max' because we track accuracy
+        optimizer, mode='max', factor=0.5, patience=7
     )
-    train_loader = DataLoader(train_set, batch_size=1, shuffle=True)  
-    val_loader = DataLoader(val_set, batch_size=1, shuffle=False) 
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, collate_fn=pad_collate)
+    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, collate_fn=pad_collate)
 
     train_losses = []
     val_losses = []
@@ -299,6 +281,22 @@ def train_model(model, train_set, val_set, print_info):
     best_val_acc = 0.0
     patience_counter = 0
     patience = 25
+    min_epochs = 40
+
+    # sanity check — run one batch through untrained model
+    model.eval()
+    with torch.no_grad():
+        x_test, y_test = next(iter(train_loader))
+        out_test = model(x_test)
+        prob_test = torch.sigmoid(out_test)
+        labeled_test = get_labeled_mask(y_test)
+        print(f"\nUntrained model output check:")
+        print(f"  logits range: {out_test.min():.3f} to {out_test.max():.3f}")
+        print(f"  probs range:  {prob_test.min():.3f} to {prob_test.max():.3f}")
+        print(f"  probs mean:   {prob_test[labeled_test].mean(dim=0).numpy()}")
+        loss_test = masked_loss(out_test, y_test, pw)
+        print(f"  initial loss: {loss_test.item():.4f}")
+    model.train()
 
     for epoch in range(num_epochs):   
         model.train()
@@ -308,9 +306,16 @@ def train_model(model, train_set, val_set, print_info):
             loss = masked_loss(pred, y, pw)
             optimizer.zero_grad()       
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=30.0)
             optimizer.step()
             train_loss_sum += loss.item()
+
+            if epoch % 10 == 0 and print_info:
+                total_norm = sum(
+                    p.grad.data.norm(2).item() ** 2
+                    for p in model.parameters() if p.grad is not None
+                ) ** 0.5
+                print(f"  Epoch {epoch} grad norm: {total_norm:.4f}")
 
         train_losses.append(train_loss_sum / len(train_loader))
         
@@ -322,29 +327,31 @@ def train_model(model, train_set, val_set, print_info):
             for x, y in val_loader:
                 raw = model(x)
                 pred = torch.sigmoid(raw)
-                all_preds.append(pred.squeeze(0))
-                all_targets.append(y.squeeze(0))
                 loss = masked_loss(raw, y, pw)
                 val_loss_sum += loss.item()
+
+                labeled_mask = get_labeled_mask(y)
+                all_preds.append(pred[labeled_mask])
+                all_targets.append(y[labeled_mask])
         
         val_losses.append(val_loss_sum / len(val_loader))
         current_acc = measure_epoch_acc(all_preds, all_targets)
         accs.append(current_acc)
 
-        # lr scheduler steps on accuracy
         scheduler.step(current_acc)
 
-        # early stopping on accuracy
+        # always save best model regardless of epoch
         if current_acc > best_val_acc:
             best_val_acc = current_acc
-            patience_counter = 0
-            torch.save(model.state_dict(), 'bilstm_best.pth')  # save best
+            patience_counter = 0  # reset counter on improvement
+            torch.save(model.state_dict(), 'bilstm_best.pth')
         else:
-            patience_counter += 1
-            if patience_counter >= patience:
-                if print_info:
-                    print(f"Early stopping at epoch {epoch+1}, best acc: {best_val_acc:.1f}%")
-                break
+            if epoch >= min_epochs:
+                patience_counter += 1
+                if patience_counter >= patience:
+                    if print_info:
+                        print(f"Early stopping at epoch {epoch+1}, best acc: {best_val_acc:.1f}%")
+                    break
         
     end_time = time.time()
     
@@ -376,26 +383,14 @@ def train_model(model, train_set, val_set, print_info):
 
 
 def measure_epoch_acc(all_preds, all_targets):
+    # These will now concatenate perfectly because they are all shape (N, 7)
     all_preds   = torch.cat(all_preds,   dim=0)
     all_targets = torch.cat(all_targets, dim=0)
 
-    labeled = get_labeled_mask(all_targets)
-    all_preds   = all_preds[labeled]
-    all_targets = all_targets[labeled]
+    # REMOVED: get_labeled_mask filtering (we already did it!)
 
     pred_binary = (all_preds > 0.5).float()
 
-    """pct_turn     = pred_binary[:, 0].mean().item() * 100
-    pct_hill     = pred_binary[:, 3].mean().item() * 100
-    pct_straight = pred_binary[:, 6].mean().item() * 100
-    #print(f"  pred: turn={pct_turn:.1f}%  hill={pct_hill:.1f}%  straight={pct_straight:.1f}%")
-
-    true_turn     = all_targets[:, 0].mean().item() * 100
-    true_hill     = all_targets[:, 3].mean().item() * 100
-    true_straight = all_targets[:, 6].mean().item() * 100
-    #print(f"  true: turn={true_turn:.1f}%  hill={true_hill:.1f}%  straight={true_straight:.1f}%")"""
-
-    # F1 instead of accuracy — penalizes degenerate all-zero or all-one predictions
     f1s = []
     for col in [0, 3, 6]:
         tp = ((pred_binary[:, col] == 1) & (all_targets[:, col] == 1)).float().sum()
@@ -453,22 +448,25 @@ def evaluate_model(model, validation_files):
     with torch.no_grad():  
         for x, y in val_loader:
             raw = model(x)
-            pred = torch.sigmoid(raw)  #v 0-1 za predictione
-            all_preds.append(pred.squeeze(0))    
-            all_targets.append(y.squeeze(0))     
+            pred = torch.sigmoid(raw)
+            
+            # Match the training fix
+            labeled_mask = get_labeled_mask(y)
+            all_preds.append(pred[labeled_mask])    
+            all_targets.append(y[labeled_mask])     
     
     all_preds   = torch.cat(all_preds,   dim=0) 
-    all_targets = torch.cat(all_targets, dim=0)  
-    labeled = get_labeled_mask(all_targets)
-    all_preds   = all_preds[labeled]
-    all_targets = all_targets[labeled]
+    all_targets = torch.cat(all_targets, dim=0)
+    
+    #labeled = get_labeled_mask(all_targets)
+    #all_preds   = all_preds[labeled]
+    #all_targets = all_targets[labeled]
     
     pred_binary = (all_preds > 0.5).float()
     print("Best model pred distribution:")
     print(f"  turn={pred_binary[:,0].mean()*100:.1f}%  hill={pred_binary[:,3].mean()*100:.1f}%  straight={pred_binary[:,6].mean()*100:.1f}%")
 
     print(f"After mask — turn: {all_targets[:,0].mean()*100:.1f}%  hill: {all_targets[:,3].mean()*100:.1f}%  straight: {all_targets[:,6].mean()*100:.1f}%")
-    print(f"Total labeled timesteps: {labeled.sum()}")
 
     pred_binary = (all_preds > 0.5).float()
     pred_binary[:, 2] = all_preds[:, 2]  # restore turn angle
@@ -527,9 +525,9 @@ def train_once(sample_files, val_ratio=0.2, seed=42):
     
     train_files, val_files = stratified_split(files, val_ratio, seed)
     
-    accel, gyro, mag, _ = load_training_sample(sample_files[0])
+    accel, gyro, _ = load_training_sample(sample_files[0])
     F = accel.shape[0]
-    input_size = F * 3 * 3
+    input_size = F * 3 * 2  # 3 channels * 2 sensors (accel + gyro, no mag)
 
     train_set = DriveDataset(train_files)
     val_set = DriveDataset(val_files)
@@ -537,16 +535,17 @@ def train_once(sample_files, val_ratio=0.2, seed=42):
     
     train_model(model, train_set, val_set, print_info=True)
 
+    # load best model (saved during training at best accuracy epoch)
     model.load_state_dict(torch.load('bilstm_best.pth'))
     torch.save(model.state_dict(), 'bilstm.pth')  # copy best to final
     
-    print(f"Val files for this seed:")
+    """print(f"Val files for this seed:")
     for f in val_files:
         data = np.load(f)
         y = data['labels']
         labeled = y.sum(axis=1) > 0
         y_l = y[labeled]
-        print(f"  {f.name}: turn={y_l[:,0].mean()*100:.0f}%  hill={y_l[:,3].mean()*100:.0f}%  straight={y_l[:,6].mean()*100:.0f}%")
+        print(f"  {f.name}: turn={y_l[:,0].mean()*100:.0f}%  hill={y_l[:,3].mean()*100:.0f}%  straight={y_l[:,6].mean()*100:.0f}%")"""
     evaluate_model(model, val_files)
     
     
@@ -554,9 +553,9 @@ def load_and_test(sample_files, val_ratio=0.2, seed=42):
     files = sample_files.copy()
     train_files, val_files = stratified_split(files, val_ratio, seed)  # match train_once
     
-    accel, gyro, mag, _ = load_training_sample(sample_files[0])
+    accel, gyro, _ = load_training_sample(sample_files[0])
     F = accel.shape[0]
-    input_size = F * 3 * 3
+    input_size = F * 3 * 2  # 3 channels * 2 sensors (accel + gyro, no mag)
 
     loaded_model = BiLSTM(input_size)
     state_dict = torch.load("bilstm.pth")
@@ -574,13 +573,15 @@ def main():
     """
     
     sample_files = list(Path('../input_data').glob('*_training.npz'))
+    #  print(len(sample_files))
     mode = int(input("Choose mode:\n\n 1: Train model once\n 2: Train model with multiple seeds\n 3: Load and test saved model\n\n Type your choice: "))
     
     SEED = 123
     if mode == 1:
         train_once(sample_files, seed=SEED)
     elif mode == 2:
-        for seed in [42, 123, 7, 99, 17]:
+        #train_ksplit(sample_files, seed=SEED)
+        for seed in [42, 88, 7, 99, 17]:
             print(f"\n--- Seed {seed} ---")
             train_once(sample_files, seed=seed)
             print("\n\n")

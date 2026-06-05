@@ -151,7 +151,7 @@ def main():
             )
 
             #dodaten primer na disk za vsako os
-            axis_output = save_axis_spectrogram_image(
+            """axis_output = save_axis_spectrogram_image(
                 sensor_name=sensor_name,
                 axis=axis,
                 frequencies=frequencies,
@@ -159,14 +159,14 @@ def main():
                 spectrogram=spectrograms[axis],
                 output_dir=OUTPUT_DIR,
             )
-            print(f"Saved: {axis_output.name}")
+            print(f"Saved: {axis_output.name}")"""
 
         show_rgb_image(sensor_name, frequencies, times, rgb_image)
 
         #shrani primer slike za porocilo ali ucenje mreze
-        output_file = OUTPUT_DIR / f"{sensor_name}_rgb_spectrogram.png"
+        """output_file = OUTPUT_DIR / f"{sensor_name}_rgb_spectrogram.png"
         save_spectrogram_image(rgb_image, output_file)
-        print(f"Saved: {output_file.name}")
+        print(f"Saved: {output_file.name}")"""
 
     #todo dodati avtomatski izbor najboljsih odsekov z dogodkom
 

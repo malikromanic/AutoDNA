@@ -2,233 +2,250 @@
 # AutoDNA - Main Application Window
 # ============================================================================
 
-from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QStackedWidget, QStatusBar, QMessageBox
-)
-from PyQt6.QtGui import QKeySequence, QShortcut, QAction
+import traceback
 from pathlib import Path
 
+from PyQt6.QtWidgets import (
+    QMainWindow, QWidget, QHBoxLayout, QStackedWidget,
+    QStatusBar, QMessageBox, QProgressDialog,
+)
+from PyQt6.QtGui import QKeySequence, QShortcut, QAction
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
+
+from app.ai_pipeline import models_exist, train_models
 from app.data_loader import DriveDataLoader
 from app.ui.sidebar import Sidebar
 from app.ui.dashboard_view import DashboardView
-from app.ui.route_replay import RouteReplayWidget
 from app.ui.ai_analysis_view import AIAnalysisView
-from app.ui.recommendations_view import RecommendationsView
-from app.ui.technical_view import TechnicalView
 
 
+# ── Background training thread ────────────────────────────────────────────────
+class TrainThread(QThread):
+    progress = pyqtSignal(str, int)    # (message, percent)
+    finished = pyqtSignal(str)         # success message
+    error    = pyqtSignal(str)         # error message
+
+    def run(self):
+        try:
+            n, *_ = train_models(progress_cb=self.progress.emit)
+            self.finished.emit(f"Models trained on {n} windows. Ready to load drives.")
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+# ── Main window ───────────────────────────────────────────────────────────────
 class AutoDNAApplication(QMainWindow):
-    """Main application window for AutoDNA."""
+    """AutoDNA main window — sidebar + stacked views."""
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AutoDNA - AI-Powered Driving Analysis")
+        self.setWindowTitle("AutoDNA — AI-Powered Driving Analysis")
         self.setGeometry(100, 80, 1440, 880)
         self.setMinimumSize(1100, 700)
-
         self.drive_data = None
 
         self._create_ui()
         self._setup_menu()
         self._setup_shortcuts()
-        self._apply_global_styles()
+        self._apply_styles()
 
-    # ----------------------------------------------------------------- UI init
+        # Check for trained models on startup
+        if not models_exist():
+            self.status.showMessage(
+                "Models not trained. Use File → Train Models (or open a drive)."
+            )
+
+    # ── UI construction ───────────────────────────────────────────────────────
     def _create_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        root_layout = QHBoxLayout(central)
-        root_layout.setContentsMargins(0, 0, 0, 0)
-        root_layout.setSpacing(0)
-
-        # Sidebar
         self.sidebar = Sidebar()
         self.sidebar.drive_selected.connect(self._on_drive_selected)
         self.sidebar.page_changed.connect(self._on_page_changed)
-        root_layout.addWidget(self.sidebar)
+        root.addWidget(self.sidebar)
 
-        # Main content stacked widget
         self.stack = QStackedWidget()
-        root_layout.addWidget(self.stack)
+        root.addWidget(self.stack)
 
-        # ---- Views (order matches NAV_PAGES in sidebar) ----
         self.dashboard_view = DashboardView()
-        self.replay_view = RouteReplayWidget()
-        self.analysis_view = AIAnalysisView()
-        self.recommendations_view = RecommendationsView()
-        self.technical_view = TechnicalView()
+        self.analysis_view  = AIAnalysisView()
 
-        self.stack.addWidget(self.dashboard_view)       # index 0
-        self.stack.addWidget(self.replay_view)          # index 1
-        self.stack.addWidget(self.analysis_view)        # index 2
-        self.stack.addWidget(self.recommendations_view) # index 3
-        self.stack.addWidget(self.technical_view)       # index 4
+        for view in (self.dashboard_view, self.analysis_view):
+            self.stack.addWidget(view)
 
-        # Page index map matches NAV_PAGES order
         self._page_index = {
-            "Dashboard":       0,
-            "Route Replay":    1,
-            "AI Analysis":     2,
-            "Recommendations": 3,
-            "Technical":       4,
+            "Dashboard":   0,
+            "AI Analysis": 1,
         }
-
-        # Show dashboard by default
         self.stack.setCurrentIndex(0)
 
-        # Status bar
         self.status = QStatusBar()
         self.setStatusBar(self.status)
-        self.status.showMessage("Ready — open a drive directory to begin.")
+        self.status.showMessage("Ready — select a drive folder containing BIN + GPS CSV.")
 
     def _setup_menu(self):
-        menubar = self.menuBar()
+        mb = self.menuBar()
 
-        file_menu = menubar.addMenu("File")
+        file_menu = mb.addMenu("File")
+        open_act = QAction("Open Drive…", self)
+        open_act.setShortcut(QKeySequence("Ctrl+O"))
+        open_act.triggered.connect(self.sidebar._on_load_drive)
+        file_menu.addAction(open_act)
 
-        open_action = QAction("Open Drive…", self)
-        open_action.setShortcut(QKeySequence("Ctrl+O"))
-        open_action.triggered.connect(self.sidebar._on_load_drive)
-        file_menu.addAction(open_action)
+        train_act = QAction("Train Models…", self)
+        train_act.setShortcut(QKeySequence("Ctrl+T"))
+        train_act.triggered.connect(self._on_train_models)
+        file_menu.addAction(train_act)
 
         file_menu.addSeparator()
+        exit_act = QAction("Exit", self)
+        exit_act.setShortcut(QKeySequence("Ctrl+Q"))
+        exit_act.triggered.connect(self.close)
+        file_menu.addAction(exit_act)
 
-        exit_action = QAction("Exit", self)
-        exit_action.setShortcut(QKeySequence("Ctrl+Q"))
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
-
-        view_menu = menubar.addMenu("View")
-        for page_id, label in [
-            ("Dashboard",       "Dashboard"),
-            ("Route Replay",    "Route Replay"),
-            ("AI Analysis",     "AI Analysis"),
-            ("Recommendations", "Recommendations"),
-            ("Technical",       "Technical"),
-        ]:
+        view_menu = mb.addMenu("View")
+        for page_id, label in self._page_labels():
             act = QAction(label, self)
-            act.triggered.connect(lambda checked=False, p=page_id: self._on_page_changed(p))
+            act.triggered.connect(lambda _, p=page_id: self._on_page_changed(p))
             view_menu.addAction(act)
 
-        help_menu = menubar.addMenu("Help")
-        about_action = QAction("About AutoDNA", self)
-        about_action.triggered.connect(self._show_about)
-        help_menu.addAction(about_action)
+        help_menu = mb.addMenu("Help")
+        about_act = QAction("About AutoDNA", self)
+        about_act.triggered.connect(self._show_about)
+        help_menu.addAction(about_act)
 
     def _setup_shortcuts(self):
-        shortcuts = {
-            "Ctrl+1": "Dashboard",
-            "Ctrl+2": "Route Replay",
-            "Ctrl+3": "AI Analysis",
-            "Ctrl+4": "Recommendations",
-            "Ctrl+5": "Technical",
-        }
-        for key, page in shortcuts.items():
+        pairs = {"Ctrl+1": "Dashboard", "Ctrl+2": "AI Analysis"}
+        for key, page in pairs.items():
             QShortcut(QKeySequence(key), self).activated.connect(
                 lambda p=page: self._on_page_changed(p)
             )
 
-    def _apply_global_styles(self):
+    def _page_labels(self):
+        return [("Dashboard", "Dashboard"), ("AI Analysis", "AI Analysis")]
+
+    def _apply_styles(self):
         self.setStyleSheet("""
-            QMainWindow {
-                background-color: #f0f2f5;
-            }
+            QMainWindow { background: #f0f2f5; }
             QMenuBar {
-                background-color: #2c3e50;
-                color: #ecf0f1;
-                padding: 2px 4px;
-                font-size: 12px;
+                background: #2c3e50; color: #ecf0f1;
+                padding: 2px 4px; font-size: 12px;
             }
-            QMenuBar::item:selected {
-                background-color: #34495e;
-                border-radius: 4px;
-            }
-            QMenu {
-                background-color: #ffffff;
-                border: 1px solid #dee2e6;
-            }
-            QMenu::item:selected {
-                background-color: #e8f0fb;
-                color: #0066cc;
-            }
-            QStatusBar {
-                background-color: #2c3e50;
-                color: #bdc3c7;
-                font-size: 11px;
-            }
+            QMenuBar::item:selected { background: #34495e; border-radius: 4px; }
+            QMenu { background: #fff; border: 1px solid #dee2e6; }
+            QMenu::item:selected { background: #e8f0fb; color: #0066cc; }
+            QStatusBar { background: #2c3e50; color: #bdc3c7; font-size: 11px; }
         """)
 
-    # --------------------------------------------------------------- Events
+    # ── Events ────────────────────────────────────────────────────────────────
     def _on_drive_selected(self, drive_path: str):
+        # Require models before loading
+        if not models_exist():
+            reply = QMessageBox.question(
+                self, "Models Not Trained",
+                "XGBoost models are not trained yet.\n\n"
+                "Train them now? (takes ~1–2 minutes on first run)",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._on_train_models(callback=lambda: self._load_drive(drive_path))
+            return
+
+        self._load_drive(drive_path)
+
+    def _load_drive(self, drive_path: str):
         try:
-            self.status.showMessage("Loading drive data…")
+            self.status.showMessage("Loading drive…")
             loader = DriveDataLoader(Path(drive_path))
             self.drive_data = loader.load_drive()
 
-            # Push data to all views
-            self.dashboard_view.set_drive_data(self.drive_data)
-            self.replay_view.set_drive_data(self.drive_data)
-            self.analysis_view.set_drive_data(self.drive_data)
-            self.recommendations_view.set_drive_data(self.drive_data)
-            self.technical_view.set_drive_data(self.drive_data)
+            for view in (self.dashboard_view, self.analysis_view):
+                view.set_drive_data(self.drive_data)
 
-            # Update sidebar stats
             events = self._count_events()
             self.sidebar.set_drive_statistics(
                 self.drive_data.drive_distance_km,
                 self.drive_data.drive_duration_sec,
-                events
+                events,
             )
-
             self.status.showMessage(
                 f"Loaded: {self.drive_data.drive_name}  |  "
                 f"{self.drive_data.drive_distance_km:.1f} km  |  "
                 f"{self.drive_data.drive_duration_sec / 60:.1f} min  |  "
-                f"{events} events detected"
+                f"{events} events  |  "
+                f"{self.drive_data.window_size}-sample windows @ {self.drive_data.target_fs} Hz"
             )
-
-            # Navigate to dashboard
             self._on_page_changed("Dashboard")
 
-        except Exception as e:
-            import traceback
-            full_tb = traceback.format_exc()
-            print(full_tb)  # visible in console
-            # Write crash log next to project root
-            log_path = Path(__file__).parent.parent / "autodna_crash.log"
-            log_path.write_text(full_tb)
-            self.status.showMessage(f"Error: {e}  (see autodna_crash.log)")
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.critical(self, "Load Error", f"{e}\n\nSee autodna_crash.log for details.")
+        except Exception:
+            tb = traceback.format_exc()
+            print(tb)
+            (Path(__file__).parent.parent / "autodna_crash.log").write_text(tb)
+            self.status.showMessage("Load error — see autodna_crash.log")
+            QMessageBox.critical(
+                self, "Drive Load Error",
+                f"{tb[-600:]}\n\nFull trace in autodna_crash.log"
+            )
+
+    def _on_train_models(self, callback=None):
+        """Run model training in a background thread with a progress dialog."""
+        dlg = QProgressDialog(
+            "Training XGBoost models on all available drives…",
+            "Cancel", 0, 100, self
+        )
+        dlg.setWindowTitle("AutoDNA — Training Models")
+        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+        dlg.setMinimumDuration(0)
+        dlg.setValue(0)
+        dlg.show()
+
+        self._train_thread = TrainThread()
+
+        def on_progress(msg, pct):
+            dlg.setLabelText(msg)
+            dlg.setValue(pct)
+
+        def on_done(msg):
+            dlg.close()
+            self.status.showMessage(msg)
+            QMessageBox.information(self, "Training Complete", msg)
+            if callback:
+                callback()
+
+        def on_err(msg):
+            dlg.close()
+            self.status.showMessage(f"Training error: {msg}")
+            QMessageBox.critical(self, "Training Error", msg)
+
+        self._train_thread.progress.connect(on_progress)
+        self._train_thread.finished.connect(on_done)
+        self._train_thread.error.connect(on_err)
+        self._train_thread.start()
 
     def _on_page_changed(self, page_name: str):
         idx = self._page_index.get(page_name)
         if idx is not None:
             self.stack.setCurrentIndex(idx)
-            # Update button checked state directly — do NOT call _on_page_click
-            # because that emits page_changed again, causing infinite recursion.
             for pid, btn in self.sidebar.page_buttons.items():
                 btn.setChecked(pid == page_name)
 
     def _count_events(self) -> int:
         if not self.drive_data:
             return 0
-        bilstm = self.drive_data.bilstm_preds
-        events = 0
-        for i in range(1, len(bilstm)):
-            if bilstm[i, 0] > 0.5 and bilstm[i - 1, 0] <= 0.5:
-                events += 1
-            if bilstm[i, 3] > 0.5 and bilstm[i - 1, 3] <= 0.5:
-                events += 1
-        return events
+        return int((self.drive_data.xgb_turn_preds != 0).sum() +
+                   (self.drive_data.xgb_hill_preds  != 0).sum())
 
     def _show_about(self):
         QMessageBox.about(
-            self,
-            "About AutoDNA",
+            self, "About AutoDNA",
             "<b>AutoDNA</b> — AI-Powered Driving Analysis<br><br>"
-            "Models: BiLSTM + XGBoost ensemble<br>"
+            "Models: XGBoost (turn + hill)<br>"
+            "IMU: STM32 BIN → 50 Hz → 100-sample windows → 38 features<br>"
+            "GPS: OBD2 CSV → deduplicated route<br>"
             "Built with PyQt6 + Folium<br><br>"
             "© 2026 AutoDNA Project"
         )
