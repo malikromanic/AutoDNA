@@ -47,7 +47,8 @@ def get_dominant_label(t_start, t_end, labels, label_key):
     """Poenostavljen label assignment brez kompliciranih pragov."""
     best_label, best_overlap = 'none', 0.0
     for lbl in labels:
-        if lbl.get(label_key) is None: continue
+        if lbl.get(label_key) is None:
+            continue
         overlap = min(t_end, lbl['t_end']) - max(t_start, lbl['t_start'])
         if overlap > best_overlap:
             best_overlap = overlap
@@ -112,7 +113,8 @@ def main():
 
     for log_idx, npz_path in enumerate(npz_files):
         json_path = JSON_DIR / (npz_path.stem + '_labels.json')
-        if not json_path.exists(): continue
+        if not json_path.exists():
+            continue
 
         (X_t, Y_t, ids_t), (X_h, Y_h, ids_h) = process_log(npz_path, json_path, log_idx)
 
