@@ -84,6 +84,9 @@ body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospa
 .li-angle{color:var(--text);font-size:9px;margin-top:2px;font-variant-numeric:tabular-nums}
 .li-del{background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:11px;padding:0 2px}
 .li-del:hover{color:#ef4444}
+.li-edit{background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:11px;padding:0 2px}
+.li-edit:hover{color:var(--accent)}
+.li-actions{display:flex;flex-direction:column;gap:2px}
 .no-labels{padding:24px 14px;color:var(--muted);font-size:10px;text-align:center;line-height:1.7}
 .sb-foot{padding:9px 12px;border-top:1px solid var(--border);font-size:9px;color:var(--muted);line-height:1.7}
 
@@ -114,6 +117,23 @@ body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospa
 .toast{position:fixed;top:60px;right:18px;background:var(--panel);border:1px solid var(--accent);color:var(--text);padding:9px 14px;border-radius:3px;font-size:10px;z-index:300;box-shadow:0 8px 24px rgba(0,0,0,.5);opacity:0;transition:opacity .25s}
 .toast.show{opacity:1}
 .toast.err{border-color:#ef4444;color:#ef4444}
+
+.auto-popup-bg{position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:200;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.auto-popup{background:var(--panel);border:1px solid var(--border2);border-radius:6px;padding:22px 24px;width:420px;box-shadow:0 24px 64px rgba(0,0,0,.7)}
+.auto-popup h3{font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:2px;color:#e879f9;margin-bottom:4px}
+.auto-popup .ap-desc{font-size:9px;color:var(--muted);margin-bottom:16px;line-height:1.6}
+.ap-section{margin-bottom:14px;padding:10px;background:var(--panel2);border:1px solid var(--border2);border-radius:3px}
+.ap-section-title{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+.ap-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:10px}
+.ap-row label{width:130px;color:var(--muted);flex-shrink:0}
+.ap-row input[type=range]{flex:1;accent-color:#e879f9}
+.ap-row .ap-val{width:45px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums}
+.ap-preview{font-size:10px;color:var(--muted);padding:8px 0;border-top:1px solid var(--border);margin-top:8px}
+.ap-preview b{color:var(--text)}
+.ap-btns{display:flex;gap:7px;margin-top:14px}
+.ap-ok{flex:1;padding:8px;background:#e879f9;color:#000;border:none;font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;border-radius:3px;letter-spacing:1px}
+.ap-cancel{padding:8px 14px;background:transparent;border:1px solid var(--border2);color:var(--muted);font-family:inherit;font-size:11px;cursor:pointer;border-radius:3px}
+.ap-cancel:hover{border-color:#e879f9;color:#e879f9}
 
 .tbtn.focus-on{border-color:var(--accent2);color:var(--accent2);background:rgba(255,107,53,.08)}
 .focus-banner{padding:5px 10px;background:rgba(255,107,53,.12);border-bottom:1px solid rgba(255,107,53,.3);font-size:10px;color:var(--accent2);display:flex;align-items:center;gap:8px}
@@ -159,6 +179,8 @@ body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospa
   <button class="tbtn ex" onclick="exportCSV()">⬇ CSV</button>
   <div class="tsep"></div>
   <button class="tbtn" id="btn-focus" onclick="toggleFocus()" title="Pokaži samo izbrani interval">👁 Focus</button>
+  <div class="tsep"></div>
+  <button class="tbtn" id="btn-autodetect" onclick="showAutoPopup()" style="border-color:#e879f9;color:#e879f9" title="Avtomatsko zaznaj ovinke in hribe">⚡ Auto</button>
   <div class="zoom-info">Vidno: <b id="range-disp">—</b> &nbsp;|&nbsp; scroll=zoom · D.klik=pan</div>
 </div>
 
@@ -254,6 +276,7 @@ body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospa
   <div class="popup" style="width:380px">
     <div class="pop-title" id="pop-title">Segment</div>
     <div class="pop-sub" id="pop-sub">—</div>
+    <input type="hidden" id="pop-edit-id" value="">
 
     <div style="background:var(--panel2);border:1px solid var(--border2);border-radius:3px;padding:10px;margin-bottom:12px">
       <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">★ Označi neodvisno (lahko oboje hkrati)</div>
@@ -301,6 +324,66 @@ body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospa
     <div class="pop-btns">
       <button class="pop-cancel" onclick="closePopup()">Prekliči</button>
       <button class="pop-ok" onclick="confirmLabel()">✓ Shrani</button>
+    </div>
+  </div>
+</div>
+
+<div class="auto-popup-bg" id="auto-popup" style="display:none">
+  <div class="auto-popup">
+    <h3>⚡ Avtomatska detekcija</h3>
+    <div class="ap-desc">Zazna ovinke (gyro Z) in hribe (gyro Y) na podlagi pragov.<br>Rezultat je groba ocena — popravi ročno kar ni OK.</div>
+
+    <div class="ap-section">
+      <div class="ap-section-title" style="color:#3b82f6">◄► Ovinki (Gyro Z)</div>
+      <div class="ap-row">
+        <label>Min. hitrost (°/s)</label>
+        <input type="range" id="ap-turn-thresh" min="0.5" max="8" step="0.5" value="2.0" oninput="autoPreview()">
+        <span class="ap-val" id="ap-turn-thresh-v">2.0</span>
+      </div>
+      <div class="ap-row">
+        <label>Min. trajanje (s)</label>
+        <input type="range" id="ap-turn-dur" min="0.5" max="5" step="0.5" value="1.5" oninput="autoPreview()">
+        <span class="ap-val" id="ap-turn-dur-v">1.5</span>
+      </div>
+      <div class="ap-row">
+        <label>Min. kot (°)</label>
+        <input type="range" id="ap-turn-angle" min="5" max="60" step="5" value="15" oninput="autoPreview()">
+        <span class="ap-val" id="ap-turn-angle-v">15</span>
+      </div>
+    </div>
+
+    <div class="ap-section">
+      <div class="ap-section-title" style="color:#f59e0b">▲▼ Hribi (Gyro Y)</div>
+      <div class="ap-row">
+        <label>Min. hitrost (°/s)</label>
+        <input type="range" id="ap-hill-thresh" min="0.2" max="5" step="0.2" value="1.0" oninput="autoPreview()">
+        <span class="ap-val" id="ap-hill-thresh-v">1.0</span>
+      </div>
+      <div class="ap-row">
+        <label>Min. trajanje (s)</label>
+        <input type="range" id="ap-hill-dur" min="0.5" max="5" step="0.5" value="2.0" oninput="autoPreview()">
+        <span class="ap-val" id="ap-hill-dur-v">2.0</span>
+      </div>
+      <div class="ap-row">
+        <label>Min. kot (°)</label>
+        <input type="range" id="ap-hill-angle" min="2" max="30" step="1" value="5" oninput="autoPreview()">
+        <span class="ap-val" id="ap-hill-angle-v">5</span>
+      </div>
+    </div>
+
+    <div class="ap-row">
+      <label style="width:auto">Način</label>
+      <select id="ap-mode" style="flex:1;background:var(--panel2);border:1px solid var(--border2);color:var(--text);font-family:inherit;font-size:10px;padding:4px 6px;border-radius:3px">
+        <option value="replace">Zamenjaj obstoječe oznake</option>
+        <option value="append">Dodaj k obstoječim</option>
+      </select>
+    </div>
+
+    <div class="ap-preview" id="ap-preview">Klikni za predogled...</div>
+
+    <div class="ap-btns">
+      <button class="ap-cancel" onclick="closeAutoPopup()">Prekliči</button>
+      <button class="ap-ok" onclick="applyAutoLabels()">⚡ Označi</button>
     </div>
   </div>
 </div>
@@ -715,6 +798,9 @@ document.addEventListener('change', e => {
 });
 
 function openPopup(tS, tE){
+  // Reset edit mode — this is a NEW label
+  document.getElementById('pop-edit-id').value = '';
+
   const tE2 = tE ?? tS + 0.05;
   const turnAngle = integrate('gyro','z',tS,tE2);
   const hillAngle = integrate('gyro','y',tS,tE2);
@@ -757,7 +843,66 @@ function openPopup(tS, tE){
   document.getElementById('popup').style.display = 'flex';
 }
 
-function closePopup(){ document.getElementById('popup').style.display = 'none'; pending = null; }
+function closePopup(){
+  document.getElementById('popup').style.display = 'none';
+  document.getElementById('pop-edit-id').value = '';
+  document.getElementById('pop-title').textContent = 'Označi segment';
+  pending = null;
+}
+
+function editLabel(id){
+  const l = labels.find(x => x.id === id);
+  if (!l) return;
+
+  // Set edit mode marker
+  document.getElementById('pop-edit-id').value = String(id);
+  document.getElementById('pop-title').textContent = 'Uredi segment';
+
+  const tS = l.tStart, tE = l.tEnd ?? l.tStart + 0.05;
+
+  // Recompute auto-suggestions (informational — keeps user-edited values)
+  const autoTurn = integrate('gyro','z', tS, tE);
+  const autoHill = integrate('gyro','y', tS, tE);
+
+  document.getElementById('pop-sub').textContent =
+    tS.toFixed(2) + 's → ' + (l.tEnd ?? tS).toFixed(2) + 's (' +
+    (l.tEnd ? (l.tEnd - tS).toFixed(2)+'s' : 'točka') + ')';
+  document.getElementById('pop-auto-turn').textContent = autoTurn.toFixed(1)+'°';
+  document.getElementById('pop-auto-hill').textContent = autoHill.toFixed(1)+'°';
+
+  // Pre-fill from existing label values
+  const hasTurn = !!l.turn;
+  const hasHill = !!l.hill;
+  const isStraight = !!l.straight;
+
+  document.getElementById('pop-has-turn').checked = hasTurn;
+  document.getElementById('pop-has-hill').checked = hasHill;
+  document.getElementById('pop-is-straight').checked = isStraight;
+  document.getElementById('pop-turn-fields').style.display = hasTurn ? 'block' : 'none';
+  document.getElementById('pop-hill-fields').style.display = hasHill ? 'block' : 'none';
+
+  if (hasTurn){
+    document.querySelector(`input[name=turn-dir][value=${l.turn.dir}]`).checked = true;
+    document.getElementById('pop-turn-angle').value = Math.abs(l.turn.angleDeg).toFixed(1);
+  } else {
+    // Defaults in case user enables the turn layer
+    const dir = autoTurn >= 0 ? 'left' : 'right';
+    document.querySelector(`input[name=turn-dir][value=${dir}]`).checked = true;
+    document.getElementById('pop-turn-angle').value = Math.abs(autoTurn).toFixed(1);
+  }
+
+  if (hasHill){
+    document.querySelector(`input[name=hill-dir][value=${l.hill.dir}]`).checked = true;
+    document.getElementById('pop-hill-angle').value = Math.abs(l.hill.angleDeg).toFixed(1);
+  } else {
+    const dir = autoHill >= 0 ? 'up' : 'down';
+    document.querySelector(`input[name=hill-dir][value=${dir}]`).checked = true;
+    document.getElementById('pop-hill-angle').value = Math.abs(autoHill).toFixed(1);
+  }
+
+  pending = { tS, tE: l.tEnd, turnAngle: autoTurn, hillAngle: autoHill };
+  document.getElementById('popup').style.display = 'flex';
+}
 
 function confirmLabel(){
   if (!pending) return;
@@ -784,15 +929,32 @@ function confirmLabel(){
     hill = { dir: dirEl.value, angleDeg: angle, intensity: autoIntensity(angle) };
   }
 
-  labels.push({
-    id: ++labelId,
-    tStart: pending.tS,
-    tEnd: pending.tE,
-    turn, hill,
-    straight: isStraight && !hasTurn && !hasHill,
-  });
-  labels.sort((a,b) => a.tStart - b.tStart);
+  const editId = document.getElementById('pop-edit-id').value;
+
+  if (editId){
+    // EDIT MODE — update existing label in place
+    const lbl = labels.find(x => x.id === parseInt(editId, 10));
+    if (lbl){
+      lbl.turn = turn;
+      lbl.hill = hill;
+      lbl.straight = isStraight && !hasTurn && !hasHill;
+      toast('Posodobljeno');
+    }
+  } else {
+    // CREATE MODE — append new label
+    labels.push({
+      id: ++labelId,
+      tStart: pending.tS,
+      tEnd: pending.tE,
+      turn, hill,
+      straight: isStraight && !hasTurn && !hasHill,
+    });
+    labels.sort((a,b) => a.tStart - b.tStart);
+  }
+
   document.getElementById('popup').style.display = 'none';
+  document.getElementById('pop-edit-id').value = '';
+  document.getElementById('pop-title').textContent = 'Označi segment';
   pending = null; renderAll(); updateSidebar();
 }
 
@@ -842,7 +1004,10 @@ function updateSidebar(){
         <div class="li-tags">${tags.join('')}</div>
         ${intensity ? `<div class="li-angle">${intensity}</div>` : ''}
       </div>
-      <button class="li-del" onclick="event.stopPropagation();delLabel(${l.id})">✕</button>
+      <div class="li-actions">
+        <button class="li-edit" title="Uredi" onclick="event.stopPropagation();editLabel(${l.id})">✎</button>
+        <button class="li-del" title="Izbriši" onclick="event.stopPropagation();delLabel(${l.id})">✕</button>
+      </div>
     </div>`;
   }).join('');
 }
@@ -1231,6 +1396,197 @@ function dl(content, filename, type){
   a.href = URL.createObjectURL(new Blob([content], {type}));
   a.download = filename; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ── AUTO-DETECT ──────────────────────────────────────────────────────────────
+
+function showAutoPopup(){
+  if (!dataLoaded){ toast('Najprej uvozi NPZ', true); return; }
+  document.getElementById('auto-popup').style.display = 'flex';
+  autoPreview();
+}
+function closeAutoPopup(){ document.getElementById('auto-popup').style.display = 'none'; }
+
+let _autoCache = null;
+
+function runAutoDetect(){
+  const T = SENSOR.gyro.t, GZ = SENSOR.gyro.z, GY = SENSOR.gyro.y;
+  if (!T.length) return { turns:[], hills:[] };
+
+  const turnThresh = parseFloat(document.getElementById('ap-turn-thresh').value);
+  const turnMinDur = parseFloat(document.getElementById('ap-turn-dur').value);
+  const turnMinAngle = parseFloat(document.getElementById('ap-turn-angle').value);
+  const hillThresh = parseFloat(document.getElementById('ap-hill-thresh').value);
+  const hillMinDur = parseFloat(document.getElementById('ap-hill-dur').value);
+  const hillMinAngle = parseFloat(document.getElementById('ap-hill-angle').value);
+
+  // Update slider display values
+  document.getElementById('ap-turn-thresh-v').textContent = turnThresh.toFixed(1);
+  document.getElementById('ap-turn-dur-v').textContent = turnMinDur.toFixed(1);
+  document.getElementById('ap-turn-angle-v').textContent = turnMinAngle.toFixed(0);
+  document.getElementById('ap-hill-thresh-v').textContent = hillThresh.toFixed(1);
+  document.getElementById('ap-hill-dur-v').textContent = hillMinDur.toFixed(1);
+  document.getElementById('ap-hill-angle-v').textContent = hillMinAngle.toFixed(0);
+
+  const turns = detectSegments(T, GZ, turnThresh, turnMinDur, turnMinAngle);
+  const hills = detectSegments(T, GY, hillThresh, hillMinDur, hillMinAngle);
+
+  _autoCache = { turns, hills };
+  return _autoCache;
+}
+
+function detectSegments(T, D, threshold, minDur, minAngle){
+  // State machine: find contiguous regions where |signal| > threshold,
+  // then extend edges to where signal crosses zero (captures full maneuver).
+  const segments = [];
+  let inSeg = false, segStart = 0, segSign = 0;
+
+  for (let i = 0; i < T.length; i++){
+    const v = D[i];
+    if (!inSeg){
+      if (Math.abs(v) > threshold){
+        inSeg = true;
+        segStart = i;
+        segSign = v > 0 ? 1 : -1;
+      }
+    } else {
+      // End segment when: signal drops below threshold AND changes sign, or stays below for a while
+      const belowThresh = Math.abs(v) < threshold * 0.5;
+      const signChanged = (v > 0 ? 1 : -1) !== segSign && Math.abs(v) > threshold;
+      if (belowThresh || signChanged || i === T.length - 1){
+        // Walk backwards from segStart to find where signal first departed from ~0
+        let expandedStart = segStart;
+        while (expandedStart > 0 && Math.abs(D[expandedStart-1]) > threshold * 0.2
+               && (D[expandedStart-1] > 0 ? 1 : -1) === segSign){
+          expandedStart--;
+        }
+        // Walk forward from i to where it settles near 0
+        let expandedEnd = i;
+        while (expandedEnd < T.length - 1 && Math.abs(D[expandedEnd]) > threshold * 0.2
+               && (D[expandedEnd] > 0 ? 1 : -1) === segSign){
+          expandedEnd++;
+        }
+
+        const tS = T[expandedStart], tE = T[expandedEnd];
+        const dur = tE - tS;
+
+        if (dur >= minDur){
+          // Integrate to get angle
+          let angle = 0;
+          for (let j = expandedStart + 1; j <= expandedEnd && j < T.length; j++){
+            angle += D[j] * (T[j] - T[j-1]);
+          }
+          if (Math.abs(angle) >= minAngle){
+            // Check for overlap with last segment — merge if close
+            if (segments.length > 0){
+              const last = segments[segments.length - 1];
+              if (tS - last.tEnd < 0.5 && Math.sign(angle) === Math.sign(last.angle)){
+                // Merge: extend the previous segment
+                last.tEnd = tE;
+                last.angle += angle;
+                inSeg = false;
+                if (signChanged){ segStart = i; segSign = v > 0 ? 1 : -1; inSeg = true; }
+                continue;
+              }
+            }
+            segments.push({ tStart: tS, tEnd: tE, angle, dir: angle > 0 ? 'pos' : 'neg' });
+          }
+        }
+        inSeg = false;
+        // If sign changed, start new segment immediately
+        if (signChanged){ segStart = i; segSign = v > 0 ? 1 : -1; inSeg = true; }
+      }
+    }
+  }
+  return segments;
+}
+
+function autoPreview(){
+  const result = runAutoDetect();
+  const el = document.getElementById('ap-preview');
+  el.innerHTML = `Najdeno: <b style="color:#3b82f6">${result.turns.length}</b> ovinkov, ` +
+    `<b style="color:#f59e0b">${result.hills.length}</b> hribov`;
+  if (result.turns.length){
+    const angles = result.turns.map(t => Math.abs(t.angle));
+    el.innerHTML += `<br>Ovinki: ${Math.min(...angles).toFixed(0)}°–${Math.max(...angles).toFixed(0)}°`;
+  }
+  if (result.hills.length){
+    const angles = result.hills.map(t => Math.abs(t.angle));
+    el.innerHTML += `<br>Hribi: ${Math.min(...angles).toFixed(0)}°–${Math.max(...angles).toFixed(0)}°`;
+  }
+}
+
+function applyAutoLabels(){
+  if (!_autoCache){ runAutoDetect(); }
+  const mode = document.getElementById('ap-mode').value;
+  if (mode === 'replace'){
+    labels = [];
+    selectedId = null;
+  }
+
+  let count = 0;
+
+  // Add turn labels
+  _autoCache.turns.forEach(seg => {
+    const dir = seg.angle > 0 ? 'left' : 'right';
+    const absAngle = Math.abs(seg.angle);
+
+    // Check if there's a hill overlapping this turn
+    let overlappingHill = null;
+    for (const h of _autoCache.hills){
+      const overlap = Math.min(seg.tEnd, h.tEnd) - Math.max(seg.tStart, h.tStart);
+      const minSpan = Math.min(seg.tEnd - seg.tStart, h.tEnd - h.tStart);
+      if (overlap > minSpan * 0.3){
+        overlappingHill = h;
+        break;
+      }
+    }
+
+    const lbl = {
+      id: ++labelId,
+      tStart: seg.tStart,
+      tEnd: seg.tEnd,
+      turn: { dir, angleDeg: absAngle, intensity: autoIntensity(absAngle) },
+      hill: null,
+      straight: false,
+    };
+
+    if (overlappingHill){
+      const hDir = overlappingHill.angle > 0 ? 'up' : 'down';
+      const hAngle = Math.abs(overlappingHill.angle);
+      lbl.hill = { dir: hDir, angleDeg: hAngle, intensity: autoIntensity(hAngle) };
+      overlappingHill._used = true;
+    }
+
+    labels.push(lbl);
+    count++;
+  });
+
+  // Add hill-only labels (not already merged with turns)
+  _autoCache.hills.forEach(seg => {
+    if (seg._used) return;
+    const dir = seg.angle > 0 ? 'up' : 'down';
+    const absAngle = Math.abs(seg.angle);
+    labels.push({
+      id: ++labelId,
+      tStart: seg.tStart,
+      tEnd: seg.tEnd,
+      turn: null,
+      hill: { dir, angleDeg: absAngle, intensity: autoIntensity(absAngle) },
+      straight: false,
+    });
+    count++;
+  });
+
+  // Clean up temp flags
+  _autoCache.hills.forEach(h => delete h._used);
+
+  labels.sort((a,b) => a.tStart - b.tStart);
+  _autoCache = null;
+  closeAutoPopup();
+  renderAll();
+  updateSidebar();
+  toast(`Avto: ${count} segmentov označenih`);
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────

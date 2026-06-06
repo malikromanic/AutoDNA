@@ -79,12 +79,15 @@ def _window_popup(w_idx, turn, hill, t0, t1, turn_conf, hill_conf,
 
 
 def _segment_popup(seg, i0, i1, mode):
-    turn = seg['turn']; hill = seg['hill']
-    t_col = _TURN_COLOR[turn]; h_col = _HILL_COLOR[hill]
+    turn = seg['turn']
+    hill = seg['hill']
+    t_col = _TURN_COLOR[turn]
+    h_col = _HILL_COLOR[hill]
     dur = seg['t1'] - seg['t0']
     header_col = h_col if mode == 'hills' else t_col
     header_lbl = _HILL_LABEL[hill] if mode == 'hills' else _TURN_LABEL[turn]
-    tr = seg['turn_raw']; hr = seg['hill_raw']
+    tr = seg['turn_raw']
+    hr = seg['hill_raw']
     sparse = (f"<span style='color:#e67e22'>⚠ {seg['n_sparse']} sparse windows</span><br>"
               if seg['n_sparse'] else "")
     return (
@@ -222,8 +225,10 @@ def _draw_per_window(fmap, turn_preds, hill_preds,
             fillOpacity=opacity,
         )
         if add_popup:
-            raw_t = [0, 0, 0]; raw_t[int(turn_preds_raw[w])] = 1
-            raw_h = [0, 0, 0]; raw_h[int(hill_preds_raw[w])] = 1
+            raw_t = [0, 0, 0]
+            raw_t[int(turn_preds_raw[w])] = 1
+            raw_h = [0, 0, 0]
+            raw_h[int(hill_preds_raw[w])] = 1
             kw['tooltip'] = (
                 f"W#{w+1} | {_TURN_LABEL[turn]} / {_HILL_LABEL[hill]} "
                 f"| T:{turn_conf:.0%} H:{hill_conf:.0%}"
@@ -459,7 +464,8 @@ class MapWidget(QWidget):
             for i in range(1, len(active)):
                 bi = active[i]['gps_i0']
                 if bi < N:
-                    prev = active[i - 1]; curr = active[i]
+                    prev = active[i - 1]
+                    curr = active[i]
                     c = turn_color(curr['turn'], curr['hill']) if mode != 'hills' else hill_color(curr['turn'], curr['hill'])
                     pn = _TURN_LABEL[prev['turn']] if mode != 'hills' else _HILL_LABEL[prev['hill']]
                     cn = _TURN_LABEL[curr['turn']] if mode != 'hills' else _HILL_LABEL[curr['hill']]

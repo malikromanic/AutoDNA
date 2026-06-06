@@ -243,7 +243,7 @@ def evaluate(model, val_files):
     r  = tp / (tp + fn + 1e-8)
     f1 = 2*p*r / (p + r + 1e-8)
     acc = (tp + tn) / (tp + fp + tn + fn + 1e-8)
-    print(f"\nhill_present:")
+    print("\nhill_present:")
     print(f"  TP={tp:.0f}  FP={fp:.0f}  TN={tn:.0f}  FN={fn:.0f}")
     print(f"  Accuracy={acc*100:.1f}%  F1={f1:.2f}  P={p:.2f}  R={r:.2f}")
 

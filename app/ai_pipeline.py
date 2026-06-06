@@ -25,8 +25,8 @@ for _p in (str(_ROOT), str(_GITHUB)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from stm32.bin_parser.stm_utils import read_packets_from_file
-from ai.preprocessing import (
+from stm32.bin_parser.stm_utils import read_packets_from_file  # noqa: E402
+from ai.preprocessing import (  # noqa: E402
     load_sensor_data,
     resample_sensors_to_common_grid,
     preprocess_sensor_data,

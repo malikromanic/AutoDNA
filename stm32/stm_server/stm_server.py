@@ -105,7 +105,7 @@ def cmd_get_last():
     if not response:
         return "FAIL: No files found on STM32"
 
-    files = [l.split()[0] for l in response.decode(errors="replace").splitlines() if ".BIN" in l.upper()]
+    files = [line.split()[0] for line in response.decode(errors="replace").splitlines() if ".BIN" in line.upper()]
     if not files:
         return "FAIL: No files found on STM32"
 
@@ -121,7 +121,7 @@ def cmd_get_all():
     if not response:
         return "FAIL: No files found on STM32"
 
-    files = [l.split()[0] for l in response.decode(errors="replace").splitlines() if ".BIN" in l.upper()]
+    files = [line.split()[0] for line in response.decode(errors="replace").splitlines() if ".BIN" in line.upper()]
     if not files:
         return "FAIL: No files found on STM32"
 
@@ -145,7 +145,7 @@ def cmd_list():
     if not response:
         return "FAIL: No files found on STM32"
 
-    files = [l.strip() for l in response.decode(errors="replace").splitlines() if l.strip()]
+    files = [line.strip() for line in response.decode(errors="replace").splitlines() if line.strip()]
     if not files:
         return "No files found on STM32"
     

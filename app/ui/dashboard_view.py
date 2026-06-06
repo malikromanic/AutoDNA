@@ -10,8 +10,8 @@ from PyQt6.QtGui import QFont
 import numpy as np
 
 try:
-    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas  # noqa: F401
+    from matplotlib.figure import Figure  # noqa: F401
     HAS_MATPLOTLIB = True
 except ImportError:
     HAS_MATPLOTLIB = False
@@ -60,7 +60,6 @@ class MetricCard(QFrame):
     def set_value(self, value: str, color: str = None):
         self.value_label.setText(value)
         if color:
-            current = self.value_label.styleSheet()
             self.value_label.setStyleSheet(f"color: {color}; font-size: 22pt; font-weight: bold;")
 
 
@@ -177,8 +176,10 @@ class DashboardView(QWidget):
         layout.addWidget(self.ai_insights_label)
 
         # ── Turn Detections ───────────────────────────────────────────────────
-        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #e0e0e0;"); layout.addWidget(sep)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #e0e0e0;")
+        layout.addWidget(sep)
 
         turns_title = QLabel("Turn Detections")
         turns_title.setStyleSheet("font-weight: bold; font-size: 11px; color: #1565c0;")
@@ -201,8 +202,10 @@ class DashboardView(QWidget):
             self._turn_rows[key] = v
 
         # ── Hill Detections ───────────────────────────────────────────────────
-        sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet("color: #e0e0e0;"); layout.addWidget(sep2)
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setStyleSheet("color: #e0e0e0;")
+        layout.addWidget(sep2)
 
         hills_title = QLabel("Hill Detections")
         hills_title.setStyleSheet("font-weight: bold; font-size: 11px; color: #2e7d32;")
@@ -224,8 +227,10 @@ class DashboardView(QWidget):
             self._hill_rows[key] = v
 
         # ── Models ────────────────────────────────────────────────────────────
-        sep3 = QFrame(); sep3.setFrameShape(QFrame.Shape.HLine)
-        sep3.setStyleSheet("color: #e0e0e0;"); layout.addWidget(sep3)
+        sep3 = QFrame()
+        sep3.setFrameShape(QFrame.Shape.HLine)
+        sep3.setStyleSheet("color: #e0e0e0;")
+        layout.addWidget(sep3)
 
         models_title = QLabel("Models")
         models_title.setStyleSheet("font-weight: bold; font-size: 11px; color: #333;")
@@ -314,9 +319,6 @@ class DashboardView(QWidget):
         right_count = int((tp == 2).sum())
         up_count    = int((hp == 1).sum())
         down_count  = int((hp == 2).sum())
-        n_turns     = left_count + right_count
-        n_hills     = up_count + down_count
-
         avg_turn_conf = float(d.xgb_turn_proba.max(axis=1).mean())
         avg_hill_conf = float(d.xgb_hill_proba.max(axis=1).mean())
 

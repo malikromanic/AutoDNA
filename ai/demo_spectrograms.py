@@ -8,7 +8,6 @@ from spectrograms import (
     load_sensor_data,
     estimate_sampling_rate,
     plot_spectrogram,
-    save_spectrogram_image,
     convert_all_sensors_to_spectrograms,
 )
 
