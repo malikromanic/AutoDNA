@@ -1,0 +1,243 @@
+{
+  "file": "LOG021.npz",
+  "exported": "2026-05-23T15:40:00.246Z",
+  "schema": "autodna-v2-multilayer",
+  "labels": [
+    {
+      "t_start": 12.6,
+      "t_end": 14.8,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 16.9,
+        "intensity": "blag"
+      },
+      "hill": {
+        "dir": "up",
+        "angleDeg": 3,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 14.839147429089799,
+      "t_end": 15.172844890704678,
+      "turn": null,
+      "hill": {
+        "dir": "up",
+        "angleDeg": 3,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 15.226101905379622,
+      "t_end": 21.840290938669035,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 30.3,
+        "intensity": "srednji"
+      },
+      "hill": {
+        "dir": "up",
+        "angleDeg": 3,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 21.908180372291298,
+      "t_end": 25.861595125821353,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 43,
+        "intensity": "srednji"
+      },
+      "hill": {
+        "dir": "up",
+        "angleDeg": 3,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 26.339865091031726,
+      "t_end": 35.16541246549211,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    },
+    {
+      "t_start": 35.4,
+      "t_end": 38.7,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 43.2,
+        "intensity": "srednji"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 39.276864306888605,
+      "t_end": 47.18457637109874,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 90.2,
+        "intensity": "zelo_oster"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 47.31280132050397,
+      "t_end": 51.118479068429735,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 34.4,
+        "intensity": "srednji"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 51.37219091829145,
+      "t_end": 66.9331843764768,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    },
+    {
+      "t_start": 67.09697560678018,
+      "t_end": 69.31748939623918,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 3.3,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 72.1,
+      "t_end": 75,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 17.444274809160362,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 75.23470226277611,
+      "t_end": 86.13668634663767,
+      "turn": null,
+      "hill": {
+        "dir": "up",
+        "angleDeg": 7,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 86.3,
+      "t_end": 89.6,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 23,
+        "intensity": "blag"
+      },
+      "hill": {
+        "dir": "up",
+        "angleDeg": 8,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 89.8,
+      "t_end": 95.2,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 132.1,
+        "intensity": "zelo_oster"
+      },
+      "hill": {
+        "dir": "up",
+        "angleDeg": 9,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 95.37632424736739,
+      "t_end": 100.31503198108369,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 16.3,
+        "intensity": "blag"
+      },
+      "hill": {
+        "dir": "up",
+        "angleDeg": 3,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 100.7,
+      "t_end": 103,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 26.4,
+        "intensity": "blag"
+      },
+      "hill": {
+        "dir": "down",
+        "angleDeg": 4,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 102.98599855231248,
+      "t_end": 105.83344073584036,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    },
+    {
+      "t_start": 105.9,
+      "t_end": 109.9,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 25.5,
+        "intensity": "blag"
+      },
+      "hill": {
+        "dir": "up",
+        "angleDeg": 5.1,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 109.99144334052893,
+      "t_end": 121.87719350275478,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    },
+    {
+      "t_start": 122,
+      "t_end": 126.4,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 44.80916030534368,
+        "intensity": "srednji"
+      },
+      "hill": null,
+      "straight": false
+    }
+  ]
+}

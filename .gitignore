@@ -14,11 +14,7 @@ env/
 # IDE
 .idea/
 .vscode/
-
-# Data files (lokalni, preveliki za repo)
-*.BIN
-*.npz
-*.csv
+.env
 
 # OS
 .DS_Store

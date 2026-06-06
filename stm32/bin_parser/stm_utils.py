@@ -1,7 +1,7 @@
 import struct
 from collections import defaultdict
 import numpy as np
-from packet import Packet, CHUNK_NAMES
+from AutoDNA.stm32.bin_parser.packet import Packet, CHUNK_NAMES
 
 
 def unstuff_bytes(data: bytes) -> bytes:

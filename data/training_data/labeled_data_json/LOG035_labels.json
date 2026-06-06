@@ -1,0 +1,161 @@
+{
+  "file": "LOG008.npz",
+  "exported": "2026-05-23T11:20:07.567Z",
+  "schema": "autodna-v2-multilayer",
+  "labels": [
+    {
+      "t_start": 8.483224861576343,
+      "t_end": 10.936032076535724,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 2.4,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 11.28940260750445,
+      "t_end": 14.885467422656765,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 20.7,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 42.701,
+      "t_end": 44.901,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 16.04427480916027,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 42.701,
+      "t_end": 44.901,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 16.04427480916027,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 45.00116289199939,
+      "t_end": 49.524611298585825,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 20.1,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 49.601,
+      "t_end": 54.601,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 49.93740458015262,
+        "intensity": "srednji"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 49.601,
+      "t_end": 54.601,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 49.93740458015262,
+        "intensity": "srednji"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 54.65991082129702,
+      "t_end": 56.24129379247057,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 8,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 56.301,
+      "t_end": 59.501,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 15.254961832061056,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 56.301,
+      "t_end": 59.501,
+      "turn": {
+        "dir": "right",
+        "angleDeg": 15.254961832061056,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 96.101,
+      "t_end": 99.501,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 18.125954198473348,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 96.101,
+      "t_end": 99.501,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 18.125954198473348,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 101.201,
+      "t_end": 103.901,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 7.4702290076335665,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 101.201,
+      "t_end": 103.901,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 7.4702290076335665,
+        "intensity": "blag"
+      },
+      "hill": null,
+      "straight": false
+    }
+  ]
+}
