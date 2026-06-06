@@ -3,7 +3,10 @@ from pathlib import Path
 
 import pytest
 
+# Allow "from stm_utils import ..." / "from packet import ..." in test files
 sys.path.insert(0, str(Path(__file__).parent.parent / "stm32" / "bin_parser"))
+# Allow "from AutoDNA.X.Y import ..." — repo's parent must be on path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 VOZNJE_DIR = Path(r"C:\Users\marom\Desktop\Voznje")
 
