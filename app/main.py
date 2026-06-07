@@ -4,14 +4,13 @@
 # ============================================================================
 
 import sys
+import os
 import traceback
 from pathlib import Path
 
-# Add repo root to path so `app.*` and `stm32.*` imports resolve
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# QWebEngineView MUST be imported before QApplication is instantiated
-from PyQt6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
+from PyQt6.QtWebEngineWidgets import QWebEngineView 
 from PyQt6.QtWidgets import QApplication
 from app.autodna_app import AutoDNAApplication
 
