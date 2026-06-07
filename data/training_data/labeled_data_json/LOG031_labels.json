@@ -1,0 +1,44 @@
+{
+  "file": "LOG002.npz",
+  "exported": "2026-05-23T08:26:13.637Z",
+  "schema": "autodna-v2-multilayer",
+  "labels": [
+    {
+      "t_start": 8.67873406882535,
+      "t_end": 14.210988755640557,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 100,
+        "intensity": "zelo_oster"
+      },
+      "hill": null,
+      "straight": false
+    },
+    {
+      "t_start": 20.7,
+      "t_end": 28,
+      "turn": {
+        "dir": "left",
+        "angleDeg": 45.1,
+        "intensity": "srednji"
+      },
+      "hill": {
+        "dir": "down",
+        "angleDeg": 2.6,
+        "intensity": "blag"
+      },
+      "straight": false
+    },
+    {
+      "t_start": 28.013444740776396,
+      "t_end": 53.32572081506649,
+      "turn": null,
+      "hill": {
+        "dir": "down",
+        "angleDeg": 3.2,
+        "intensity": "blag"
+      },
+      "straight": false
+    }
+  ]
+}

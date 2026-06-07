@@ -1,0 +1,12 @@
+numpy
+matplotlib
+pyserial
+beamngpy
+pandas
+scipy
+xgboost
+scikit-learn
+PyQt6
+PyQt6-WebEngine
+folium
+torch
