@@ -540,7 +540,7 @@ def train_once(sample_files, val_ratio=0.2, seed=42):
     model.load_state_dict(torch.load('bilstm_best.pth'))
     torch.save(model.state_dict(), 'bilstm.pth')  # copy best to final
     
-    print(f"Val files for this seed:")
+    print("Val files for this seed:")
     for f in val_files:
         data = np.load(f)
         y = data['labels']

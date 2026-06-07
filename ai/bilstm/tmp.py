@@ -290,7 +290,7 @@ def train_model(model, train_set, val_set, print_info):
         out_test = model(x_test)
         prob_test = torch.sigmoid(out_test)
         labeled_test = get_labeled_mask(y_test)
-        print(f"\nUntrained model output check:")
+        print("\nUntrained model output check:")
         print(f"  logits range: {out_test.min():.3f} to {out_test.max():.3f}")
         print(f"  probs range:  {prob_test.min():.3f} to {prob_test.max():.3f}")
         print(f"  probs mean:   {prob_test[labeled_test].mean(dim=0).numpy()}")

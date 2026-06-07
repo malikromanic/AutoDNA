@@ -5,8 +5,7 @@ import serial
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-from sis import group_packets
-from stm_utils import parse_packet
+from AutoDNA.stm32.bin_parser.stm_utils import group_packets, parse_packet
 
 PORT = 'COM4'
 OUTPUT_FILENAME = "sensor.bin"
