@@ -203,7 +203,7 @@ class DashboardView(QWidget):
         self._rec_grid.setSpacing(4)
         layout.addLayout(self._rec_grid)
         self._rec_rows: dict[str, QLabel] = {}
-        for key in ["GPS Points", "IMU Samples", "IMU Duration"]:
+        for key in ["GPS Points", "GPS Duration"]:
             self._add_stat_row(self._rec_grid, self._rec_rows, key, "#555")
 
         layout.addStretch()
@@ -266,5 +266,4 @@ class DashboardView(QWidget):
 
         #snemanje
         self._rec_rows["GPS Points"].setText(str(len(d.gps_lat)))
-        self._rec_rows["IMU Samples"].setText(str(len(d.imu_timestamps)))
-        self._rec_rows["IMU Duration"].setText(f"{d.imu_timestamps[-1]:.0f} s")
+        self._rec_rows["GPS Duration"].setText(f"{d.drive_duration_sec:.0f} s")

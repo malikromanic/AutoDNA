@@ -50,11 +50,7 @@ class AutoDNAApplication(QMainWindow):
         self._setup_shortcuts()
         self._apply_styles()
 
-        #ob zagonu preveri ali obstajajo ze nauceni modeli
-        if not models_exist():
-            self.status.showMessage(
-                "Models not trained. Use File → Train Models (or open a drive)."
-            )
+        self.status.showMessage("Ready — select a drive folder containing a GPS CSV.")
 
     def _create_ui(self):
         #osnovna postavitev: stranska vrstica levo, sklop pogledov desno
@@ -86,7 +82,7 @@ class AutoDNAApplication(QMainWindow):
         #statusna vrstica na dnu okna za kratka sporocila
         self.status = QStatusBar()
         self.setStatusBar(self.status)
-        self.status.showMessage("Ready — select a drive folder containing BIN + GPS CSV.")
+        self.status.showMessage("Ready — select a drive folder containing a GPS CSV.")
 
     def _setup_menu(self):
         #menijska vrstica: file (odpri, ucenje, izhod) in view (menjava strani)
@@ -148,28 +144,13 @@ class AutoDNAApplication(QMainWindow):
 
     # ── Events ────────────────────────────────────────────────────────────────
     def _on_drive_selected(self, drive_path: str):
-        #zahtevaj obstoj modelov pred nalaganjem voznje
-        #brez naucenih modelov xgboost ni mogoce izvesti napovedi
-        if not models_exist():
-            reply = QMessageBox.question(
-                self, "Models Not Trained",
-                "XGBoost models are not trained yet.\n\n"
-                "Train them now? (takes ~1–2 minutes on first run)",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            #ce uporabnik privoli: najprej treniraj in potem nalozi voznju
-            if reply == QMessageBox.StandardButton.Yes:
-                self._on_train_models(callback=lambda: self._load_drive(drive_path))
-            return
-
-        #modeli obstajajo - neposredno nalozi voznju
         self._load_drive(drive_path)
 
     def _load_drive(self, drive_path: str):
         #nalozi voznju in posodobi vse poglede z novimi podatki
         try:
             self.status.showMessage("Loading drive…")
-            #ustvari naloznik in pozeni polni pipeline (bin parsiranje + xgboost)
+            #ustvari naloznik in pozeni gps pipeline
             loader = DriveDataLoader(Path(drive_path))
             self.drive_data = loader.load_drive()
 
@@ -257,8 +238,7 @@ class AutoDNAApplication(QMainWindow):
         QMessageBox.about(
             self, "About AutoDNA",
             "<b>AutoDNA</b> — AI-Powered Driving Analysis<br><br>"
-            "Models: XGBoost (turn + hill)<br>"
-            "IMU: STM32 BIN → 50 Hz → 100/200-sample windows → 43 turn / 41 hill features<br>"
+            "Detection: GPS heading change (turns) · GPS altitude change (hills)<br>"
             "GPS: OBD2 CSV → deduplicated route<br>"
             "Built with PyQt6 + Folium<br><br>"
             "© 2026 AutoDNA Project"

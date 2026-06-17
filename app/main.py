@@ -1,8 +1,3 @@
-# ============================================================================
-# AutoDNA - AI-Powered Driving Analysis Platform
-# Dashboard Application (PyQt6)
-# ============================================================================
-
 import sys
 import os
 import traceback

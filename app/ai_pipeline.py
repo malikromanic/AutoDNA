@@ -4,6 +4,7 @@ import json
 import tempfile
 import numpy as np
 from numpy.fft import rfft
+_trapz = getattr(np, 'trapezoid', getattr(np, 'trapz', None))  # 2.0+ renamed trapz→trapezoid
 from pathlib import Path
 
 # ── Path setup ────────────────────────────────────────────────────────────────
@@ -139,8 +140,8 @@ def extract_features_turn(window: np.ndarray) -> np.ndarray:
     #znacilke gyro_z - glavni signal za smer in intenziteto zavoja
     feats += [
         gz.max(), gz.min(), gz.mean(), gz.std(),
-        np.trapezoid(gz),
-        abs(np.trapezoid(gz)),
+        _trapz(gz),
+        abs(_trapz(gz)),
         np.abs(gz).max(),
         np.sum(gz > 0.1) / len(gz),
         np.sum(gz < -0.1) / len(gz),
@@ -159,7 +160,7 @@ def extract_features_turn(window: np.ndarray) -> np.ndarray:
         ay.mean(), ay.std(), np.abs(ay).max(),
         np.sum(ay < -0.2) / len(ay),
         np.sum(ay > 0.2) / len(ay),
-        np.trapezoid(ay),
+        _trapz(ay),
     ]
     feats += [az.mean(), az.std()]
 
@@ -233,7 +234,7 @@ def extract_features_hill(window: np.ndarray) -> np.ndarray:
     g_dev_max = np.abs(a_norm - expected_g).max()
 
     dt = 1.0 / _FS
-    pitch_delta_gyro = np.trapezoid(gy) * dt
+    pitch_delta_gyro = _trapz(gy) * dt
 
     feats += [
         a_norm_mean, a_norm.std(),
@@ -437,7 +438,15 @@ def parse_and_preprocess_bin(bin_path: Path):
     else:
         print(f"[AutoDNA] {msg}")
 
-    return signal, timestamps
+    #fizikalni naklon za validacijo klancev: surove vrednosti v radianih brez normalizacije
+    #normalizacija unicuje absolutni kot (dc odmik na ravnem cestiscu napolni [-1,1])
+    #odstevamo povprecje prvih 2 sekund da kompenziramo staticni odmik pritrditve senzorja
+    init_n_cf = min(int(_CF_INIT_SECONDS * TARGET_FS), len(pitch_cf_raw))
+    pitch_physical = (pitch_cf_raw - float(pitch_cf_raw[:init_n_cf].mean())).astype(np.float32)
+    print(f"[AutoDNA] pitch_physical (offset-corrected): "
+          f"[{pitch_physical.min():.3f}, {pitch_physical.max():.3f}] rad")
+
+    return signal, timestamps, pitch_physical
 
 
 # ── Windowing ─────────────────────────────────────────────────────────────────
@@ -474,127 +483,71 @@ def models_exist() -> bool:
             (MODEL_DIR / 'model_hill.json').exists())
 
 
-def load_xgb_models():
-    #nalozi oba shranjena xgboost modela iz json datotek
-    from xgboost import XGBClassifier
-    if not models_exist():
-        raise FileNotFoundError(
-            f"XGBoost models not found in {MODEL_DIR}. "
-            "Train them first via the app Setup dialog."
-        )
-    #model za zavoje: 43 znacilk, 3 razredi (brez/levo/desno)
-    m_turn = XGBClassifier()
-    m_turn.load_model(str(MODEL_DIR / 'model_turn.json'))
-    #model za klance: 41 znacilk, 3 razredi (brez/gor/dol)
-    m_hill = XGBClassifier()
-    m_hill.load_model(str(MODEL_DIR / 'model_hill.json'))
-    return m_turn, m_hill
+#neuporabljeno - predict_windows nima vec klicatelja (gps je primarni detektor)
+#load_xgb_models je klical samo predict_windows - brez klicatelja je nedosegljivo
+# def load_xgb_models():
+#     from xgboost import XGBClassifier
+#     if not models_exist():
+#         raise FileNotFoundError(
+#             f"XGBoost models not found in {MODEL_DIR}. "
+#             "Train them first via the app Setup dialog."
+#         )
+#     m_turn = XGBClassifier()
+#     m_turn.load_model(str(MODEL_DIR / 'model_turn.json'))
+#     m_hill = XGBClassifier()
+#     m_hill.load_model(str(MODEL_DIR / 'model_hill.json'))
+#     return m_turn, m_hill
 
 
-def _load_hill_multipliers() -> np.ndarray:
-    #multiplikatorji verjetnosti klancev - nauceni med treningom za boljso tocnost
-    #ce datoteka ne obstaja vrni enote (brez ucinka)
-    path = MODEL_DIR / 'hill_prob_multipliers.npy'
-    if path.exists():
-        return np.load(str(path)).astype(np.float32)
-    return np.ones(3, dtype=np.float32)
+#neuporabljeno - multiplikatorji so bili del xgboost inference pipeline-a
+#_load_hill_multipliers je klical samo predict_windows - brez klicatelja je nedosegljivo
+# def _load_hill_multipliers() -> np.ndarray:
+#     path = MODEL_DIR / 'hill_prob_multipliers.npy'
+#     if path.exists():
+#         return np.load(str(path)).astype(np.float32)
+#     return np.ones(3, dtype=np.float32)
 
 
-def predict_windows(signal: np.ndarray):
-    """
-    Run turn + hill inference on the full (N, 11) signal.
-
-    Internally creates:
-      • Turn windows : (M_turn, 100, 11) — stride 25
-      • Hill windows : (M_hill, 200, 11) — stride 50
-
-    Hill predictions are mapped back to the turn window grid so all
-    output arrays have length M_turn (= number of turn windows).
-
-    Returns
-    -------
-    turn_preds : (M_turn,) int32   — 0=none  1=left  2=right
-    hill_preds : (M_turn,) int32   — 0=none  1=up    2=down
-    turn_proba : (M_turn, 3) f32
-    hill_proba : (M_turn, 3) f32   — raw hill proba resampled to turn grid
-    """
-    #pozeni napovedi zavojev in klancev - hill okna se preslikajo na zavorno mrezo
-
-    #nalozi oba modela in multiplikatorje verjetnosti klancev
-    m_turn, m_hill = load_xgb_models()
-    hill_mult = _load_hill_multipliers()
-
-    print(f"[AutoDNA] ── PIPELINE STAGE 6: FEATURE EXTRACTION + INFERENCE ────────")
-    print(f"  Input signal shape: {signal.shape}")
-    print(f"  Hill prob multipliers: {hill_mult.tolist()}")
-
-    N = len(signal)
-
-    #okna za zavoje: 100 vzorcev, korak 25
-    M_turn = max(0, (N - WINDOW_SIZE_TURN) // STRIDE_TURN + 1)
-    if M_turn == 0:
-        empty = np.zeros(0, dtype=np.int32)
-        return empty, empty, np.zeros((0, 3), np.float32), np.zeros((0, 3), np.float32)
-
-    X_turn = np.array([
-        extract_features_turn(signal[i * STRIDE_TURN:i * STRIDE_TURN + WINDOW_SIZE_TURN])
-        for i in range(M_turn)
-    ], dtype=np.float32)
-    #zamenjaj nan/inf ki nastanejo pri enic korelacijah ali fft
-    X_turn = np.nan_to_num(X_turn, nan=0.0, posinf=1e6, neginf=-1e6)
-
-    print(f"[AutoDNA] Turn features ({M_turn} windows × {X_turn.shape[1]} feats):"
-          f"  min={X_turn.min():.4f}  max={X_turn.max():.4f}"
-          f"  mean={X_turn.mean():.4f}  std={X_turn.std():.4f}")
-    nan_count = int(np.isnan(X_turn).sum())
-    if nan_count:
-        print(f"[AutoDNA] WARNING: {nan_count} NaN values in turn feature matrix!")
-
-    turn_preds = m_turn.predict(X_turn).astype(np.int32)
-    turn_proba = m_turn.predict_proba(X_turn).astype(np.float32)
-
-    #izpisi 5 oken z najvisjim zaupanjem za zaznavo zavoja
-    turn_event_prob = 1.0 - turn_proba[:, 0]
-    top5 = np.argsort(turn_event_prob)[::-1][:5]
-    print(f"[AutoDNA] Turn top-5 event windows: "
-          + "  ".join(f"w{i}={turn_event_prob[i]:.2f}({['N','L','R'][turn_preds[i]]})"
-                      for i in top5))
-
-    #okna za klance: 200 vzorcev, korak 50
-    M_hill = max(0, (N - WINDOW_SIZE_HILL) // STRIDE_HILL + 1)
-    if M_hill == 0:
-        return turn_preds, np.zeros(M_turn, np.int32), turn_proba, np.zeros((M_turn, 3), np.float32)
-
-    X_hill = np.array([
-        extract_features_hill(signal[i * STRIDE_HILL:i * STRIDE_HILL + WINDOW_SIZE_HILL])
-        for i in range(M_hill)
-    ], dtype=np.float32)
-    X_hill = np.nan_to_num(X_hill, nan=0.0, posinf=1e6, neginf=-1e6)
-
-    print(f"[AutoDNA] Hill features ({M_hill} windows × {X_hill.shape[1]} feats):"
-          f"  min={X_hill.min():.4f}  max={X_hill.max():.4f}"
-          f"  mean={X_hill.mean():.4f}  std={X_hill.std():.4f}")
-
-    hill_proba_raw = m_hill.predict_proba(X_hill).astype(np.float32)
-    #prilagoditev verjetnosti z naученimi multiplikatorji
-    hill_proba_tuned = hill_proba_raw * hill_mult
-    hill_preds_raw = np.argmax(hill_proba_tuned, axis=1).astype(np.int32)
-
-    #preslikaj napovedi klancev na mrezo zavojev z najblizjim sosedom
-    turn_centers = np.arange(M_turn) * STRIDE_TURN + WINDOW_SIZE_TURN // 2
-    hill_centers = np.arange(M_hill) * STRIDE_HILL + WINDOW_SIZE_HILL // 2
-
-    idx = np.searchsorted(hill_centers, turn_centers)
-    idx_r = np.clip(idx, 0, M_hill - 1)
-    idx_l = np.clip(idx - 1, 0, M_hill - 1)
-    dist_r = np.abs(hill_centers[idx_r] - turn_centers)
-    dist_l = np.abs(hill_centers[idx_l] - turn_centers)
-    nearest = np.where(dist_l < dist_r, idx_l, idx_r)
-
-    hill_preds = hill_preds_raw[nearest].astype(np.int32)
-    hill_proba = hill_proba_raw[nearest]
-
-    return turn_preds, hill_preds, turn_proba, hill_proba
+#neuporabljeno - xgboost inferenca za zavoje in klance
+#gps je primarni detektor - predict_windows nima vec klicatelja v app
+# def predict_windows(signal: np.ndarray):
+#     """
+#     Run turn + hill inference on the full (N, 11) signal.
+#     Hill predictions are mapped back to the turn window grid so all
+#     output arrays have length M_turn (= number of turn windows).
+#     Returns turn_preds, hill_preds, turn_proba, hill_proba.
+#     """
+#     m_turn, m_hill = load_xgb_models()
+#     hill_mult = _load_hill_multipliers()
+#     N = len(signal)
+#     M_turn = max(0, (N - WINDOW_SIZE_TURN) // STRIDE_TURN + 1)
+#     if M_turn == 0:
+#         empty = np.zeros(0, dtype=np.int32)
+#         return empty, empty, np.zeros((0,3), np.float32), np.zeros((0,3), np.float32)
+#     X_turn = np.array([
+#         extract_features_turn(signal[i*STRIDE_TURN:i*STRIDE_TURN+WINDOW_SIZE_TURN])
+#         for i in range(M_turn)], dtype=np.float32)
+#     X_turn = np.nan_to_num(X_turn, nan=0.0, posinf=1e6, neginf=-1e6)
+#     turn_preds = m_turn.predict(X_turn).astype(np.int32)
+#     turn_proba = m_turn.predict_proba(X_turn).astype(np.float32)
+#     M_hill = max(0, (N - WINDOW_SIZE_HILL) // STRIDE_HILL + 1)
+#     if M_hill == 0:
+#         return turn_preds, np.zeros(M_turn, np.int32), turn_proba, np.zeros((M_turn,3), np.float32)
+#     X_hill = np.array([
+#         extract_features_hill(signal[i*STRIDE_HILL:i*STRIDE_HILL+WINDOW_SIZE_HILL])
+#         for i in range(M_hill)], dtype=np.float32)
+#     X_hill = np.nan_to_num(X_hill, nan=0.0, posinf=1e6, neginf=-1e6)
+#     hill_proba_raw   = m_hill.predict_proba(X_hill).astype(np.float32)
+#     hill_proba_tuned = hill_proba_raw * hill_mult
+#     hill_preds_raw   = np.argmax(hill_proba_tuned, axis=1).astype(np.int32)
+#     turn_centers = np.arange(M_turn) * STRIDE_TURN + WINDOW_SIZE_TURN // 2
+#     hill_centers = np.arange(M_hill) * STRIDE_HILL + WINDOW_SIZE_HILL // 2
+#     idx   = np.searchsorted(hill_centers, turn_centers)
+#     idx_r = np.clip(idx,     0, M_hill - 1)
+#     idx_l = np.clip(idx - 1, 0, M_hill - 1)
+#     nearest = np.where(np.abs(hill_centers[idx_l] - turn_centers) <
+#                        np.abs(hill_centers[idx_r] - turn_centers), idx_l, idx_r)
+#     return turn_preds, hill_preds_raw[nearest].astype(np.int32), turn_proba, hill_proba_raw[nearest]
 
 
 # ── Model training ────────────────────────────────────────────────────────────
