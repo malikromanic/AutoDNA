@@ -59,6 +59,74 @@ MAX_ANGLE_TURN = 100.0
 MAX_ANGLE_HILL = 15.0
 #Hill angles larger than this value are clipped to 1.0 in the label matrix
 
+
+FILES_90_RIGHT_FLIP = set(range(5, 12)) | set(range(15, 30))        # 5-11, 15-29
+FILES_90_LEFT_FLIP = set(range(1, 5)) | set(range(12, 15)) | set(range(30, 46))  # 1-4, 12-14, 30-45
+
+
+def get_log_number(npz_path):
+    """Extract the numeric index from a log filename e.g. LOG005 -> 5."""
+    stem = Path(npz_path).stem  #   "LOG005"
+    digits = ''.join(c for c in stem if c.isdigit())
+    return int(digits) if digits else -1
+
+
+def swap_axes_90_right_flip(sensors):
+    """
+    Correct axis orientation for files where sensor points to right window.
+    Sensor X points right, Y points forward — swap to standard (X=forward, Y=left).
+    
+    standard_x =  sensor_y
+    standard_y = -sensor_x
+    standard_z =  sensor_z  (unchanged)
+    """
+    corrected = {}
+    for name, data in sensors.items():
+        corrected[name] = {
+            'ts':  data['ts'],
+            'x':   data['y'].copy(),    # new X = old Y (forward)
+            'y':  -data['x'].copy(),    # new Y = -old X (left = -right)
+            'z':   data['z'].copy(),
+        }
+    return corrected
+
+
+def swap_axes_90_left_flip(sensors):
+    """
+    Correct axis orientation for files where sensor points to left window.
+    Sensor X points left, Y points backward — swap to standard (X=forward, Y=left).
+    
+    standard_x = -sensor_y
+    standard_y =  sensor_x
+    standard_z =  sensor_z  (unchanged)
+    """
+    corrected = {}
+    for name, data in sensors.items():
+        corrected[name] = {
+            'ts':  data['ts'],
+            'x':  -data['y'].copy(),    # new X = -old Y (forward = -backward)
+            'y':   data['x'].copy(),    # new Y = old X (left)
+            'z':   data['z'].copy(),
+        }
+    return corrected
+
+
+def compute_pitch_angle_signal(accel_x, accel_z):
+    """
+    Compute pitch angle with mounting offset removed.
+    Uses median of first 5 seconds as baseline (assumes car starts on flat road).
+    """
+    raw_pitch = np.degrees(np.arctan2(-accel_x, accel_z))
+    
+    # estimate mounting offset from first 2% of recording
+    # assumes recording starts on approximately flat road
+    n_baseline = max(100, len(raw_pitch) // 50)
+    baseline = np.median(raw_pitch[:n_baseline])
+    
+    print(f"  Mounting offset: {baseline:.2f}°")
+    return raw_pitch - baseline
+
+
 def save_training_sample(npz_path, converted, labels, processed, nperseg, noverlap, output_dir):
     """Save one recording's spectrogram, per-window statistics, and labels as a
     single compressed ``.npz`` file.
@@ -131,6 +199,13 @@ def save_training_sample(npz_path, converted, labels, processed, nperseg, noverl
     acc_x_means = compute_mean_per_window(acc_x_signal, nperseg, noverlap)
     arrays['accel_x_mean_per_window'] = acc_x_means  
     
+    accel_x_raw = processed['accel']['x']
+    accel_z_raw = processed['accel']['z']
+    pitch_signal = compute_pitch_angle_signal(accel_x_raw, accel_z_raw)
+    pitch_means = compute_mean_per_window(pitch_signal, nperseg, noverlap)
+    arrays['pitch_angle_per_window'] = pitch_means.astype(np.float32)
+
+
     first_sensor = next(iter(converted.values()))
     times = first_sensor['times']
     y = labels_to_timeseries(labels, times)
@@ -237,7 +312,245 @@ def compute_mean_per_window(gyro_z_signal, nperseg, noverlap):
     return np.array(means, dtype=np.float32)
 
 
+def plot_axis_correction(parsed_dir, my_file_num=10, teammate_file_num=3):
+    """
+    Plot gyro and accel X/Y/Z before and after axis correction
+    for one file from each device to verify the swap is correct.
+    """
+    import matplotlib.pyplot as plt
+
+    def load_and_swap(log_num):
+        # find the file
+        matches = list(parsed_dir.glob(f'*{log_num:03d}*.npz'))
+        if not matches:
+            matches = list(parsed_dir.glob(f'*{log_num}*.npz'))
+        if not matches:
+            print(f"File LOG{log_num:03d} not found")
+            return None, None, None
+        
+        path = matches[0]
+        sensors = load_sensor_data(path)
+        sensors = resample_sensors_to_common_grid(sensors)
+        raw = {name: {k: v.copy() for k, v in data.items()} 
+               for name, data in sensors.items()}
+
+        if log_num in FILES_90_RIGHT_FLIP:
+            corrected = swap_axes_90_right_flip(sensors)
+            label = f'LOG{log_num:03d} (mine)'
+        elif log_num in FILES_90_LEFT_FLIP:
+            corrected = swap_axes_90_left_flip(sensors)
+            label = f'LOG{log_num:03d} (teammate)'
+        else:
+            corrected = sensors
+            label = f'LOG{log_num:03d} (unknown)'
+
+        return raw, corrected, label
+
+    fig, axes = plt.subplots(6, 4, figsize=(20, 18))
+    fig.suptitle('Axis correction verification — gyro and accel X/Y/Z', fontsize=14)
+
+    sensor_pairs = [
+        ('gyro',  'x', 0), ('gyro',  'y', 1), ('gyro',  'z', 2),
+        ('accel', 'x', 3), ('accel', 'y', 4), ('accel', 'z', 5),
+    ]
+
+    for file_num, col_offset in [(my_file_num, 0), (teammate_file_num, 2)]:
+        raw, corrected, file_label = load_and_swap(file_num)
+        if raw is None:
+            continue
+
+        for sensor_name, axis, row in sensor_pairs:
+            if sensor_name not in raw:
+                continue
+
+            ts = raw[sensor_name]['ts']
+            ts = (ts - ts[0]) / 1000.0  # to seconds
+
+            raw_signal = raw[sensor_name][axis]
+            cor_signal = corrected[sensor_name][axis]
+
+            # before
+            ax = axes[row][col_offset]
+            ax.plot(ts, raw_signal, linewidth=0.8)
+            ax.set_title(f'{file_label}\n{sensor_name.upper()} {axis.upper()} — BEFORE')
+            ax.set_ylabel('amplitude')
+            ax.grid(True)
+
+            # after
+            ax = axes[row][col_offset + 1]
+            ax.plot(ts, cor_signal, linewidth=0.8, color='orange')
+            ax.set_title(f'{file_label}\n{sensor_name.upper()} {axis.upper()} — AFTER')
+            ax.set_ylabel('amplitude')
+            ax.grid(True)
+
+    for ax in axes[-1]:
+        ax.set_xlabel('time (s)')
+
+    plt.tight_layout()
+    plt.savefig('axis_correction_check.png', dpi=100)
+    plt.show()
+    print("Saved: axis_correction_check.png")
+
+
+def plot_pitch_vs_labels(parsed_dir, label_dir, log_num):
+    """
+    Plot computed pitch angle alongside hill labels to verify correctness.
+    Uphill regions should show positive pitch, downhill negative.
+    """
+    import matplotlib.pyplot as plt
+    import json
+
+    matches = list(parsed_dir.glob(f'*{log_num:03d}*.npz'))
+    if not matches:
+        print(f"File LOG{log_num:03d} not found")
+        return
+
+    sensors = load_sensor_data(matches[0])
+    sensors = resample_sensors_to_common_grid(sensors)
+
+    if log_num in FILES_90_RIGHT_FLIP:
+        sensors = swap_axes_90_right_flip(sensors)
+    elif log_num in FILES_90_LEFT_FLIP:
+        sensors = swap_axes_90_left_flip(sensors)
+
+    accel = sensors['accel']
+    ts = (accel['ts'] - accel['ts'][0]) / 1000.0  # seconds
+
+    pitch = compute_pitch_angle_signal(accel['x'], accel['z'])
+    
+    print(f"pitch stats: min={pitch.min():.3f}  max={pitch.max():.3f}  mean={pitch.mean():.3f}")
+    print(f"accel_x stats: min={accel['x'].min():.1f}  max={accel['x'].max():.1f}  mean={accel['x'].mean():.1f}")
+    print(f"accel_z stats: min={accel['z'].min():.1f}  max={accel['z'].max():.1f}  mean={accel['z'].mean():.1f}")
+
+    label_path = label_dir / f'LOG{log_num:03d}_labels.json'
+    if not label_path.exists():
+        print(f"Labels not found for LOG{log_num:03d}")
+        return
+
+    with open(label_path) as f:
+        labels = json.load(f)['labels']
+
+    fig, axes = plt.subplots(3, 1, figsize=(16, 10), sharex=True)
+    fig.suptitle(f'LOG{log_num:03d} — pitch angle vs hill labels', fontsize=13)
+
+    # plot 1: raw accel x and z for reference
+    axes[0].plot(ts, accel['x'], linewidth=0.5, label='accel X (forward)', alpha=0.8)
+    axes[0].plot(ts, accel['z'], linewidth=0.5, label='accel Z (vertical)', alpha=0.8)
+    axes[0].axhline(0,    color='gray', linewidth=0.5, linestyle='--')
+    axes[0].axhline(1000, color='green', linewidth=0.8, linestyle='--', label='expected 1g')
+    axes[0].set_ylabel('mg (raw)')
+    axes[0].legend(fontsize=8)
+    axes[0].grid(True)
+
+    # plot 2: computed pitch angle
+    axes[1].plot(ts, pitch, linewidth=0.6, color='purple', label='pitch angle (°)')
+    axes[1].axhline(0, color='gray', linewidth=0.5, linestyle='--')
+    axes[1].axhline( 1.5, color='orange', linewidth=0.8, linestyle='--', label='threshold ±1.5°')
+    axes[1].axhline(-1.5, color='orange', linewidth=0.8, linestyle='--')
+    axes[1].set_ylabel('pitch (degrees)')
+    axes[1].set_ylim(-20, 20)  # expected range for normal roads
+    axes[1].legend(fontsize=8)
+    axes[1].grid(True)
+
+    # plot 3: pitch angle with hill label shading
+    axes[2].plot(ts, pitch, linewidth=0.6, color='purple', label='pitch angle (°)')
+    axes[2].axhline(0, color='gray', linewidth=0.5, linestyle='--')
+
+    legend_added = set()
+    for seg in labels:
+        if seg.get('hill'):
+            color = 'red' if seg['hill']['dir'] == 'up' else 'blue'
+            label_str = f"hill {seg['hill']['dir']}"
+            axes[2].axvspan(
+                seg['t_start'], seg['t_end'],
+                alpha=0.25, color=color,
+                label=label_str if label_str not in legend_added else ''
+            )
+            legend_added.add(label_str)
+
+    axes[2].set_ylabel('pitch (degrees)')
+    axes[2].set_ylim(-20, 20)
+    axes[2].set_xlabel('time (s)')
+    axes[2].legend(fontsize=8)
+    axes[2].grid(True)
+
+    plt.tight_layout()
+    plt.savefig(f'pitch_check_LOG{log_num:03d}.png', dpi=100)
+    plt.show()
+    print(f"Saved: pitch_check_LOG{log_num:03d}.png")
+
+    # print statistics per labeled hill segment
+    print("\nPitch statistics per hill segment:")
+    for seg in labels:
+        if seg.get('hill'):
+            t0, t1 = seg['t_start'], seg['t_end']
+            mask = (ts >= t0) & (ts <= t1)
+            if mask.any():
+                seg_pitch = pitch[mask]
+                print(f"  t={t0:.1f}-{t1:.1f}s  dir={seg['hill']['dir']:4s}  "
+                      f"angle={seg['hill']['angleDeg']}°  "
+                      f"pitch_mean={seg_pitch.mean():.2f}°  "
+                      f"pitch_std={seg_pitch.std():.2f}°  "
+                      f"pitch_range=[{seg_pitch.min():.2f}, {seg_pitch.max():.2f}]")
+
+
+def sanity_check_sensors(parsed_dir, log_num):
+    """
+    Print statistics for a file to verify sensor readings make sense.
+    At rest: accel_z ≈ ±1000mg, accel_x/y ≈ 0, gyro_x/y/z ≈ 0
+    """
+    import matplotlib.pyplot as plt
+    
+    matches = list(parsed_dir.glob(f'*{log_num:03d}*.npz'))
+    if not matches:
+        print(f"File not found: LOG{log_num:03d}")
+        return
+    
+    sensors = load_sensor_data(matches[0])
+    sensors = resample_sensors_to_common_grid(sensors)
+    
+
+    if log_num in FILES_90_RIGHT_FLIP:
+        sensors = swap_axes_90_right_flip(sensors)
+    elif log_num in FILES_90_LEFT_FLIP:
+        sensors = swap_axes_90_left_flip(sensors)
+
+    for sensor_name in ['accel', 'gyro']:
+        if sensor_name not in sensors:
+            continue
+        d = sensors[sensor_name]
+        ts = (d['ts'] - d['ts'][0]) / 1000.0
+        
+        print(f"\n{sensor_name.upper()} statistics:")
+        for axis in ['x', 'y', 'z']:
+            sig = d[axis]
+            print(f"  {axis}: mean={sig.mean():.1f}  std={sig.std():.1f}  "
+                  f"min={sig.min():.1f}  max={sig.max():.1f}")
+        
+        # plot all 3 axes
+        fig, axes = plt.subplots(3, 1, figsize=(14, 8), sharex=True)
+        fig.suptitle(f'LOG{log_num:03d} — {sensor_name.upper()} (after axis correction)')
+        for i, axis in enumerate(['x', 'y', 'z']):
+            axes[i].plot(ts, d[axis], linewidth=0.6)
+            axes[i].set_ylabel(f'{axis} (raw)')
+            axes[i].axhline(0, color='red', linewidth=0.5, linestyle='--')
+            if sensor_name == 'accel' and axis == 'z':
+                axes[i].axhline(1000, color='green', linewidth=0.8, 
+                               linestyle='--', label='expected 1g')
+                axes[i].axhline(-1000, color='green', linewidth=0.8, linestyle='--')
+                axes[i].legend()
+        axes[-1].set_xlabel('time (s)')
+        plt.tight_layout()
+        plt.savefig(f'sanity_LOG{log_num:03d}_{sensor_name}.png', dpi=100)
+        plt.show()
+
+
+
 def main():
+    plot_axis_correction(PARSED_DIR, 10, 3)
+    sanity_check_sensors(PARSED_DIR, log_num=10)   # one of yours
+    sanity_check_sensors(PARSED_DIR, log_num=2)    # teammate's
+
     """Process all recordings found in ``PARSED_DIR`` and write training
     samples to ``input_data/``.
  
@@ -245,16 +558,20 @@ def main():
  
     1. Looks for a matching label file in ``LABELED_DIR``; skips the recording
        with a warning if none is found.
-    2. Loads, resamples, and pre-processes the IMU sensor data.
-    3. Selects STFT parameters via
+    2. Applies conversion into standard orientation depending on teammate A or teammate B recording
+    3. Loads, resamples, and pre-processes the IMU sensor data.
+    4. Selects STFT parameters via
        :func:`~AutoDNA.ai.demo_spectrograms.choose_stft_parameters`.
-    4. Converts pre-processed data to spectrograms.
-    5. Loads the JSON labels and calls :func:`save_training_sample`.
+    5. Converts pre-processed data to spectrograms.
+    6. Loads the JSON labels and calls :func:`save_training_sample`.
  
     :raises FileNotFoundError: Propagated from underlying I/O helpers if a
         ``.npz`` file listed in ``LOG_FILES`` cannot be read.
     :raises json.JSONDecodeError: If a label file contains malformed JSON.
     """
+    #plot_pitch_vs_labels(PARSED_DIR, LABELED_DIR, 10)
+    #plot_pitch_vs_labels(PARSED_DIR, LABELED_DIR, 3)
+
     for npz_path in LOG_FILES:
         label_path = LABELED_DIR / (npz_path.stem + '_labels.json')
             
@@ -264,6 +581,15 @@ def main():
         
         sensors = load_sensor_data(npz_path)
         sensors = resample_sensors_to_common_grid(sensors)
+
+        log_num = get_log_number(npz_path)
+        if log_num in FILES_90_RIGHT_FLIP:
+            sensors = swap_axes_90_right_flip(sensors)
+        elif log_num in FILES_90_LEFT_FLIP:
+            sensors = swap_axes_90_left_flip(sensors)
+        else:
+            print(f"  Warning: {npz_path.name} not in any known file set, no axis correction applied")
+
         first = sensors[next(iter(sensors))]
         fs = estimate_sampling_rate(first['ts'])
     
@@ -277,7 +603,7 @@ def main():
             labels = json.load(f)['labels']
                 
         save_training_sample(npz_path, converted, labels, processed, nperseg, noverlap,
-                             output_dir='input_data')
+                             output_dir='input_data_flipped')
         
         
 if __name__ == "__main__":

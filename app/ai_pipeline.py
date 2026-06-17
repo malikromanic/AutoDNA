@@ -17,8 +17,6 @@ import numpy as np
 from pathlib import Path
 
 # ── Path setup ────────────────────────────────────────────────────────────────
-# dashboard/main.py adds GITHUB/AutoDNA to sys.path; stm_utils.py internally
-# uses "from AutoDNA.stm32..." so GITHUB (parent) must also be on path.
 _ROOT   = Path(__file__).resolve().parent.parent   # …/GITHUB/AutoDNA
 _GITHUB = _ROOT.parent                              # …/GITHUB
 for _p in (str(_ROOT), str(_GITHUB)):
@@ -31,17 +29,13 @@ from ai.preprocessing import (  # noqa: E402
     resample_sensors_to_common_grid,
     preprocess_sensor_data,
 )
+from ai.features import extract_features  # noqa: E402
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 WINDOW_SIZE = 100   # samples per prediction window  (2 s @ 50 Hz)
 STRIDE      = 25    # samples between consecutive windows (matches build_dataset.py)
 TARGET_FS   = 50    # Hz after resampling
 CUTOFF_HZ   = 5.0  # Butterworth low-pass cutoff
-
-# Column indices in the (N, 9) IMU signal matrix
-GYRO_X, GYRO_Y, GYRO_Z    = 0, 1, 2
-ACCEL_X, ACCEL_Y, ACCEL_Z = 3, 4, 5
-MAG_X,  MAG_Y,  MAG_Z     = 6, 7, 8
 
 # Model output classes
 TURN_LABELS = {0: 'none', 1: 'left', 2: 'right'}
@@ -51,39 +45,6 @@ HILL_LABELS = {0: 'none', 1: 'up',   2: 'down'}
 MODEL_DIR       = _ROOT / 'ai' / 'window_based' / 'dataset_output'
 PARSED_DATA_DIR = _ROOT / 'data' / 'training_data' / 'parsed_data'
 LABELS_DIR      = _ROOT / 'data' / 'training_data' / 'labeled_data_json'
-
-
-# ── Feature extraction (must be identical to train_xgboost.py) ───────────────
-def extract_features(window: np.ndarray) -> np.ndarray:
-    """38 hand-crafted features from a (100, 9) IMU window."""
-    feats: list[float] = []
-    gz = window[:, GYRO_Z]
-    feats += [gz.max(), gz.min(), gz.mean(), gz.std(),
-              float(np.sum(gz)) / len(gz), float(np.abs(gz).max()),
-              float(np.sum(gz >  0.1)) / len(gz),
-              float(np.sum(gz < -0.1)) / len(gz)]
-    for ch in (GYRO_X, GYRO_Y):
-        g = window[:, ch]
-        feats += [float(g.mean()), float(g.std()), float(np.abs(g).max())]
-    ax = window[:, ACCEL_X]
-    feats += [float(ax.mean()), float(ax.std()), float(ax.max()), float(ax.min()),
-              float(np.sum(ax)) / len(ax)]
-    ay = window[:, ACCEL_Y]
-    feats += [float(ay.mean()), float(ay.std()), float(np.abs(ay).max()),
-              float(np.sum(ay < -0.2)) / len(ay),
-              float(np.sum(ay >  0.2)) / len(ay)]
-    az = window[:, ACCEL_Z]
-    feats += [float(az.mean()), float(az.std())]
-    for ch in (MAG_X, MAG_Y, MAG_Z):
-        m = window[:, ch]
-        feats += [float(m.mean()), float(m.max() - m.min())]
-    corr = (float(np.corrcoef(gz, ay)[0, 1])
-            if gz.std() > 0 and ay.std() > 0 else 0.0)
-    feats += [corr,
-              float(gz.std()) / (float(ax.std()) + 1e-6),
-              float(np.mean(gz ** 2)),
-              float(np.mean(ax ** 2))]
-    return np.array(feats, dtype=np.float32)
 
 
 # ── BIN parsing + preprocessing ───────────────────────────────────────────────
@@ -98,7 +59,6 @@ def parse_and_preprocess_bin(bin_path: Path):
     """
     from collections import defaultdict
 
-    # 1. Parse BIN → {sensor_name: [[ts_ms, x, y, z], ...]}
     packets = read_packets_from_file(str(bin_path))
     rows: dict[str, list] = defaultdict(list)
     for pkt in packets:
@@ -110,7 +70,6 @@ def parse_and_preprocess_bin(bin_path: Path):
 
     raw_arrays = {name: np.array(r, dtype=np.float32) for name, r in rows.items()}
 
-    # 2. Write to a temp NPZ so load_sensor_data() can consume it
     fd, tmp = tempfile.mkstemp(suffix='.npz')
     os.close(fd)
     try:
@@ -122,13 +81,9 @@ def parse_and_preprocess_bin(bin_path: Path):
         except OSError:
             pass
 
-    # 3. Resample all sensors to a common 50 Hz grid
     resampled = resample_sensors_to_common_grid(sensors, target_fs=TARGET_FS)
-
-    # 4. Smooth → lowpass → normalize
     processed = preprocess_sensor_data(resampled, fs=TARGET_FS, cutoff=CUTOFF_HZ)
 
-    # 5. Stack into (N, 9): gyro_xyz | accel_xyz | mag_xyz
     signal = np.column_stack([
         processed['gyro']['x'],  processed['gyro']['y'],  processed['gyro']['z'],
         processed['accel']['x'], processed['accel']['y'], processed['accel']['z'],
@@ -255,7 +210,7 @@ def train_models(progress_cb=None):
         raise ValueError("No training windows found. Check parsed_data and labels dirs.")
 
     if progress_cb:
-        progress_cb("Extracting 38-feature vectors…", 76)
+        progress_cb("Extracting feature vectors…", 76)
 
     X  = np.array(all_X)
     Yt = np.array(all_Yt)
