@@ -28,4 +28,4 @@ jobs:
         run: ruff check .
 
       - name: Run tests with coverage
-        run: pytest --cov=stm32/bin_parser --cov-report=term-missing -v
+        run: pytest --cov=stm32/bin_parser --cov=ai/preprocessing --cov=ai/features --cov-report=term-missing -v
