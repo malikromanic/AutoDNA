@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QKeySequence, QShortcut, QAction
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
-from app.ai_pipeline import models_exist, train_models
+from app.ai_pipeline import train_models
 from app.data_loader import DriveDataLoader
 from app.ui.sidebar import Sidebar
 from app.ui.dashboard_view import DashboardView

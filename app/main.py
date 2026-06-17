@@ -1,11 +1,10 @@
 import sys
-import os
 import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PyQt6.QtWebEngineWidgets import QWebEngineView 
+from PyQt6.QtWebEngineWidgets import QWebEngineView # noqa: F401
 from PyQt6.QtWidgets import QApplication
 from app.autodna_app import AutoDNAApplication
 

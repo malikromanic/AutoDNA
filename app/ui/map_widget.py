@@ -58,7 +58,8 @@ def _route_segments(arr: np.ndarray):
     #razstavi polje na odseke z enako vrednostjo - uporablja se za barvanje poti
     segs, i, N = [], 0, len(arr)
     while i < N:
-        p = int(arr[i]); j = i
+        p = int(arr[i])
+        j = i
         while j < N and int(arr[j]) == p:
             j += 1
         segs.append((i, j, p))

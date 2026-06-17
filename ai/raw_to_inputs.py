@@ -480,7 +480,7 @@ def plot_pitch_vs_labels(parsed_dir, label_dir, log_num):
     print(f"Saved: pitch_check_LOG{log_num:03d}.png")
 
     # print statistics per labeled hill segment
-    print(f"\nPitch statistics per hill segment:")
+    print("\nPitch statistics per hill segment:")
     for seg in labels:
         if seg.get('hill'):
             t0, t1 = seg['t_start'], seg['t_end']

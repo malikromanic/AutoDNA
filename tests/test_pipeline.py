@@ -6,7 +6,6 @@ Requires ai/features.py and the updated app/ai_pipeline.py (which imports from i
 import json
 
 import numpy as np
-import pytest
 
 from AutoDNA.ai.features import N_FEATURES, extract_features
 from AutoDNA.ai.preprocessing import (
