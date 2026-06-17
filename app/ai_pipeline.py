@@ -3,8 +3,16 @@ import sys
 import json
 import tempfile
 import numpy as np
+<<<<<<< Updated upstream
 from numpy.fft import rfft
 _trapz = getattr(np, 'trapezoid', getattr(np, 'trapz', None))  # 2.0+ renamed trapz→trapezoid
+=======
+<<<<<<< HEAD
+=======
+from numpy.fft import rfft
+_trapz = getattr(np, 'trapezoid', getattr(np, 'trapz', None))  # 2.0+ renamed trapz→trapezoid
+>>>>>>> 15643d88c1a87fd432878e46626916791f4397d6
+>>>>>>> Stashed changes
 from pathlib import Path
 
 # ── Path setup ────────────────────────────────────────────────────────────────
@@ -304,6 +312,220 @@ def check_model_compatibility() -> tuple[bool, str]:
     return True, f"Models OK ({method})."
 
 
+<<<<<<< Updated upstream
+=======
+def _load_sensors_with_pitch(npz_path):
+    """Like load_sensor_data, but also returns the STORED fused pitch that
+    add_fused_pitch.py wrote into the npz, so training uses the exact values the
+    labels came from. gyro/accel/mag load as normal (sorted by ts); the pitch
+    entry is pulled out separately because it holds ts/vals, not ts/x/y/z.
+
+<<<<<<< HEAD
+    Returns (sensors, pitch_vals_or_None, pitch_ts_or_None)."""
+    sensors = {}
+    pitch_vals = pitch_ts = None
+    with np.load(str(npz_path), allow_pickle=True) as raw:
+        for name in raw.files:
+            data = raw[name]
+            if isinstance(data, np.ndarray) and data.dtype == object:
+                data = data.item() if data.shape == () else data[0]
+            if isinstance(data, dict):
+                if 'vals' in data and 'x' not in data:        # stored pitch dict
+                    pitch_vals = np.asarray(data['vals'], float)
+                    pitch_ts = np.asarray(data['ts'], float)
+                    continue
+                ts = np.asarray(data['ts'], float)
+                x = np.asarray(data['x'], float)
+                y = np.asarray(data['y'], float)
+                z = np.asarray(data['z'], float)
+            else:
+                arr = np.asarray(data, float)
+                if arr.ndim != 2 or arr.shape[1] < 4:
+                    continue                                  # skip anything unexpected
+                arr = arr[np.argsort(arr[:, 0])]
+                ts, x, y, z = arr[:, 0], arr[:, 1], arr[:, 2], arr[:, 3]
+            sensors[name] = {'ts': ts, 'x': x, 'y': y, 'z': z}
+    return sensors, pitch_vals, pitch_ts
+=======
+    #razvezi kanale signala - vsak kanal je 1d polje dolzine 100
+    gx = window[:, GYRO_X]
+    gy = window[:, GYRO_Y]
+    gz = window[:, GYRO_Z]
+    ax = window[:, ACCEL_X]
+    ay = window[:, ACCEL_Y]
+    az = window[:, ACCEL_Z]
+    roll_cf = window[:, ROLL_CF]
+
+    #znacilke gyro_z - glavni signal za smer in intenziteto zavoja
+    feats += [
+        gz.max(), gz.min(), gz.mean(), gz.std(),
+        _trapz(gz),
+        abs(_trapz(gz)),
+        np.abs(gz).max(),
+        np.sum(gz > 0.1) / len(gz),
+        np.sum(gz < -0.1) / len(gz),
+        np.median(gz),
+        np.argmax(np.abs(gz)) / len(gz),
+        np.mean(gz**3) / (gz.std()**3 + 1e-6),
+    ]
+
+    #znacilke gyro_x in gyro_y
+    for g in (gx, gy):
+        feats += [g.mean(), g.std(), np.abs(g).max()]
+
+    #znacilke pospeska - vzdolzni in bocni pospesek med zavojem
+    feats += [ax.mean(), ax.std(), ax.max(), ax.min()]
+    feats += [
+        ay.mean(), ay.std(), np.abs(ay).max(),
+        np.sum(ay < -0.2) / len(ay),
+        np.sum(ay > 0.2) / len(ay),
+        _trapz(ay),
+    ]
+    feats += [az.mean(), az.std()]
+
+    #korelacija med kotno hitrostjo in bocnim pospesekom
+    corr_gz_ay = (float(np.corrcoef(gz, ay)[0, 1])
+                  if gz.std() > 0 and ay.std() > 0 else 0.0)
+    corr_gz_ax = (float(np.corrcoef(gz, ax)[0, 1])
+                  if gz.std() > 0 and ax.std() > 0 else 0.0)
+    feats += [corr_gz_ay, corr_gz_ax]
+
+    #energija signalov
+    feats += [np.mean(gz**2), np.mean(ay**2), np.mean(ax**2)]
+
+    #frekvencan analiza kotne hitrosti
+    fft_gz = np.abs(rfft(gz - gz.mean()))
+    feats += [fft_gz[:3].sum(), fft_gz[3:10].sum(), float(np.argmax(fft_gz))]
+
+    #znacilke nagiba iz komplementarnega filtra
+    feats += [
+        roll_cf.mean(),
+        roll_cf.std(),
+        roll_cf[-1] - roll_cf[0],
+        np.abs(roll_cf).max(),
+        roll_cf.max() - roll_cf.min(),
+    ]
+
+    return np.array(feats, dtype=np.float32)
+
+
+def extract_features_hill(window: np.ndarray) -> np.ndarray:
+    """41 features from a (200, 11) window. Mirrors train_xgboost.py exactly."""
+    #izvleci 41 znacilk iz okna (200, 11) za detekcijo klancev
+    #mora biti identicno train_xgboost.py - vsaka razlika kvari napovedi
+    feats = []
+
+    #razvezi kanale signala - vsak kanal je 1d polje dolzine 200
+    gx = window[:, GYRO_X]
+    gy = window[:, GYRO_Y]
+    gz = window[:, GYRO_Z]
+    ax = window[:, ACCEL_X]
+    ay = window[:, ACCEL_Y]
+    az = window[:, ACCEL_Z]
+    pitch_cf = window[:, PITCH_CF]
+    roll_cf = window[:, ROLL_CF]
+
+    #znacilke naklona iz komplementarnega filtra - kljucne za detekcijo klanca
+    p_mean = pitch_cf.mean()
+    p_std = pitch_cf.std()
+    p_delta = float(pitch_cf[-1]) - float(pitch_cf[0])
+
+    #trend naklona skozi 4 cetrtine okna - zazna enakomeren vzpon ali spust
+    n_q = max(1, len(pitch_cf) // 4)
+    quarters_p = [pitch_cf[i*n_q:(i+1)*n_q].mean() for i in range(4)]
+    pitch_trend_q = quarters_p[3] - quarters_p[0]
+
+    t_axis = np.arange(len(pitch_cf), dtype=np.float32)
+    pitch_slope = np.polyfit(t_axis, pitch_cf, 1)[0]
+
+    feats += [
+        p_mean, p_std, p_delta, pitch_trend_q, pitch_slope,
+        pitch_cf.min(), pitch_cf.max(),
+        pitch_cf.max() - pitch_cf.min(),
+    ]
+    feats += quarters_p
+
+    #fizikalne znacilke - odstopanje od gravitacije locuje surove in normirane enote
+    a_norm = np.sqrt(ax**2 + ay**2 + az**2)
+    a_norm_mean = a_norm.mean()
+    expected_g = 9.81 if a_norm_mean > 5.0 else 1.0
+    g_dev_mean = np.abs(a_norm - expected_g).mean()
+    g_dev_max = np.abs(a_norm - expected_g).max()
+
+    dt = 1.0 / _FS
+    pitch_delta_gyro = _trapz(gy) * dt
+
+    feats += [
+        a_norm_mean, a_norm.std(),
+        g_dev_mean, g_dev_max,
+        pitch_delta_gyro, abs(pitch_delta_gyro),
+        np.abs(pitch_delta_gyro - p_delta),
+    ]
+
+    #surovi pospesek in linearni trend vzdolz okna
+    ax_slope = np.polyfit(t_axis, ax, 1)[0]
+    az_slope = np.polyfit(t_axis, az, 1)[0]
+    feats += [
+        ax.mean(), ax.std(),
+        ay.mean(), ay.std(),
+        az.mean(), az.std(),
+        ax.max() - ax.min(),
+        az.max() - az.min(),
+        ax_slope, az_slope,
+    ]
+
+    #znacilke ziroskopa
+    feats += [
+        gy.mean(), gy.std(), np.abs(gy).max(),
+        gx.mean(), gx.std(),
+        gz.mean(), gz.std(),
+    ]
+
+    #znacilke nagiba
+    feats += [roll_cf.mean(), roll_cf.std()]
+
+    #frekvencan analiza navpicnega pospeska - zazna vibracije klanca
+    fft_az = np.abs(rfft(az - az.mean()))
+    total_e = fft_az.sum() + 1e-6
+    feats += [
+        fft_az[:3].sum() / total_e,
+        fft_az[3:10].sum() / total_e,
+        fft_az[10:].sum() / total_e,
+    ]
+
+    return np.array(feats, dtype=np.float32)
+
+
+
+def check_model_compatibility() -> tuple[bool, str]:
+    """
+    Return (ok, message).  ok=False means models were trained by the old
+    build_dataset.py pipeline which uses a different preprocessing order.
+    The app's own train_models() produces compatible models.
+    """
+    #preveri ali so shranjeni modeli zdrzljivi s trenutnim predprocesiranjem
+
+    #preberi shranjene metrike - ce ne obstajajo so modeli netrenirani
+    metrics = load_metrics()
+    if metrics is None:
+        return False, "No model_metrics.json found — models have never been trained via the app."
+
+    #stara pipeline je ucila cf na ze normiranih podatkih (napacen vrstni red)
+    #nova pipeline najprej izracuna cf, sele potem normira - metrika razlikuje versiji
+    method = metrics.get('eval_method', '')
+    if '5-fold' in method:
+        return False, (
+            "Models were trained by the OLD pipeline (5-fold CV). "
+            "Preprocessing mismatch: old training used CF on post-normalization data "
+            "while inference uses CF on raw data. "
+            "Retrain via File → Train Models (Ctrl+T)."
+        )
+    return True, f"Models OK ({method})."
+>>>>>>> 15643d88c1a87fd432878e46626916791f4397d6
+
+
+# ── BIN parsing + preprocessing ───────────────────────────────────────────────
+>>>>>>> Stashed changes
 def parse_and_preprocess_bin(bin_path: Path):
     """
     Parse a .BIN file through the full AutoDNA preprocessing pipeline.
@@ -428,6 +650,12 @@ def parse_and_preprocess_bin(bin_path: Path):
     print(f"  global range: min={signal.min():.3f}  max={signal.max():.3f}")
 
     timestamps = processed['gyro']['ts'].astype(np.float64)
+<<<<<<< Updated upstream
+=======
+<<<<<<< HEAD
+    return signal, timestamps
+=======
+>>>>>>> Stashed changes
     print(f"  timestamps: 0.00 … {float(timestamps[-1]):.2f}s"
           f"  (span={float(timestamps[-1]-timestamps[0]):.2f}s)")
 
@@ -447,6 +675,10 @@ def parse_and_preprocess_bin(bin_path: Path):
           f"[{pitch_physical.min():.3f}, {pitch_physical.max():.3f}] rad")
 
     return signal, timestamps, pitch_physical
+<<<<<<< Updated upstream
+=======
+>>>>>>> 15643d88c1a87fd432878e46626916791f4397d6
+>>>>>>> Stashed changes
 
 
 # ── Windowing ─────────────────────────────────────────────────────────────────
@@ -483,6 +715,65 @@ def models_exist() -> bool:
             (MODEL_DIR / 'model_hill.json').exists())
 
 
+<<<<<<< Updated upstream
+#neuporabljeno - predict_windows nima vec klicatelja (gps je primarni detektor)
+#load_xgb_models je klical samo predict_windows - brez klicatelja je nedosegljivo
+# def load_xgb_models():
+#     from xgboost import XGBClassifier
+#     if not models_exist():
+#         raise FileNotFoundError(
+#             f"XGBoost models not found in {MODEL_DIR}. "
+#             "Train them first via the app Setup dialog."
+#         )
+#     m_turn = XGBClassifier()
+#     m_turn.load_model(str(MODEL_DIR / 'model_turn.json'))
+#     m_hill = XGBClassifier()
+#     m_hill.load_model(str(MODEL_DIR / 'model_hill.json'))
+#     return m_turn, m_hill
+=======
+<<<<<<< HEAD
+def load_xgb_models():
+    from xgboost import XGBClassifier
+    if not models_exist():
+        raise FileNotFoundError(
+            f"XGBoost models not found in {MODEL_DIR}. "
+            "Train them first via the app Setup dialog."
+        )
+    m_turn = XGBClassifier()
+    m_turn.load_model(str(MODEL_DIR / 'model_turn.json'))
+    m_hill = XGBClassifier()
+    m_hill.load_model(str(MODEL_DIR / 'model_hill.json'))
+    return m_turn, m_hill
+>>>>>>> Stashed changes
+
+
+#neuporabljeno - multiplikatorji so bili del xgboost inference pipeline-a
+#_load_hill_multipliers je klical samo predict_windows - brez klicatelja je nedosegljivo
+# def _load_hill_multipliers() -> np.ndarray:
+#     path = MODEL_DIR / 'hill_prob_multipliers.npy'
+#     if path.exists():
+#         return np.load(str(path)).astype(np.float32)
+#     return np.ones(3, dtype=np.float32)
+
+<<<<<<< Updated upstream
+=======
+    Returns
+    -------
+    turn_preds : (M,) int32   — 0=none  1=left  2=right
+    hill_preds : (M,) int32   — 0=none  1=up    2=down
+    turn_proba : (M, 3) f32   — class probabilities
+    hill_proba : (M, 3) f32
+    """
+    m_turn, m_hill = load_xgb_models()
+    X = np.array([extract_features(windows[i]) for i in range(len(windows))])
+    X = np.nan_to_num(X, nan=0.0, posinf=1.0, neginf=-1.0)
+    return (
+        m_turn.predict(X).astype(np.int32),
+        m_hill.predict(X).astype(np.int32),
+        m_turn.predict_proba(X).astype(np.float32),
+        m_hill.predict_proba(X).astype(np.float32),
+    )
+=======
 #neuporabljeno - predict_windows nima vec klicatelja (gps je primarni detektor)
 #load_xgb_models je klical samo predict_windows - brez klicatelja je nedosegljivo
 # def load_xgb_models():
@@ -507,6 +798,7 @@ def models_exist() -> bool:
 #         return np.load(str(path)).astype(np.float32)
 #     return np.ones(3, dtype=np.float32)
 
+>>>>>>> Stashed changes
 
 #neuporabljeno - xgboost inferenca za zavoje in klance
 #gps je primarni detektor - predict_windows nima vec klicatelja v app
@@ -548,6 +840,10 @@ def models_exist() -> bool:
 #     nearest = np.where(np.abs(hill_centers[idx_l] - turn_centers) <
 #                        np.abs(hill_centers[idx_r] - turn_centers), idx_l, idx_r)
 #     return turn_preds, hill_preds_raw[nearest].astype(np.int32), turn_proba, hill_proba_raw[nearest]
+<<<<<<< Updated upstream
+=======
+>>>>>>> 15643d88c1a87fd432878e46626916791f4397d6
+>>>>>>> Stashed changes
 
 
 # ── Model training ────────────────────────────────────────────────────────────
