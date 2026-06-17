@@ -1,0 +1,25 @@
+{
+  "file": "sim_LOG002.npz",
+  "exported": "2026-05-31T18:02:55.000Z",
+  "schema": "autodna-v2-multilayer",
+  "labels": [
+    {
+      "t_start": 0.0,
+      "t_end": 18.646772861480713,
+      "turn": null,
+      "hill": null,
+      "straight": true
+    },
+    {
+      "t_start": 18.67203950881958,
+      "t_end": 29.98338270187378,
+      "turn": null,
+      "hill": {
+        "dir": "up",
+        "angleDeg": 1.6,
+        "intensity": "blag"
+      },
+      "straight": false
+    }
+  ]
+}
