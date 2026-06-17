@@ -12,7 +12,7 @@ def load_sensor_data(filepath):
     with np.load(filepath, allow_pickle=True) as raw:
         for sensor_name in raw.files:
             data = raw[sensor_name]
-
+            
             if isinstance(data, np.ndarray) and data.dtype == object:
                 data = data.item() if data.shape == () else data[0]
 
@@ -23,15 +23,18 @@ def load_sensor_data(filepath):
                 z = np.asarray(data["z"], dtype=float)
             else:
                 data = np.asarray(data, dtype=float)
-
                 if data.ndim != 2 or data.shape[1] < 4:
                     raise ValueError(
                         f"{sensor_name} must have columns: timestamp, x, y, z"
                     )
-
+                
+                # divide accel x/y/z by 16 to correct left-shift alignment
+                if sensor_name == "accel":
+                    data = data.copy()
+                    data[:, 1:] = data[:, 1:] / 16.0
+            
                 order = np.argsort(data[:, 0])
                 data = data[order]
-
                 ts = data[:, 0]
                 x = data[:, 1]
                 y = data[:, 2]

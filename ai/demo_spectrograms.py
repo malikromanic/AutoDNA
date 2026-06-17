@@ -12,7 +12,7 @@ from spectrograms import (
 )
 
 
-DATA_FILE = Path(__file__).with_name("LOG009_preprocessed.npz")
+DATA_FILE = Path(__file__).with_name("LOG010_preprocessed.npz")
 OUTPUT_DIR = Path(__file__).with_name("spectrogram_examples")
 AXIS_FIGSIZE = (12, 5)
 RGB_FIGSIZE = (11, 5)
