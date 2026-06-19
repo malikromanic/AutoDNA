@@ -36,9 +36,9 @@ _HILL_WEVENT = 6
 
 #minimalne dolzine zaporedja - krajse se steje za sum
 _MIN_TURN_WIN   = 2    #~2 okni (~2 s)
-_MIN_HILL_WIN   = 2    #~2 okni = ~2 s
+_MIN_HILL_WIN   = 5    #~5 gps tock - krajse je sum gps visine
 _MERGE_TURN_WIN = 4    #~4 okna pri vklopljenem filtriranju kratkih odsekov
-_MERGE_HILL_WIN = 4    #~4 s
+_MERGE_HILL_WIN = 6    #~6 gps tock z vklopljenim filtrom
 
 #gps detekcija zavojev - primarni vir za lokacijo zavoja in smer l/d
 _GPS_GATE_CONTEXT   = 8     #gps tocke na vsaki strani za merjenje spremembe smeri
@@ -51,6 +51,11 @@ _MERGE_GAP_GPS = 5
 #gps detekcija klancev z nadmorsko visino - primarni vir za smer gor/dol
 _GPS_ALT_CONTEXT   = 15    #gps tocke na vsaki strani za merjenje spremembe visine
 _GPS_ALT_THRESHOLD = 2.5   #metri spremembe visine za potrditev klanca
+
+#minimalna razdalja odseka v metrih - krajsi odseki so sum gps visine
+_HILL_MIN_DIST_M   = 60.0
+#maksimalen realisten naklon ceste v procentih - nad tem je gps napaka
+_HILL_MAX_SLOPE_PCT = 15.0
 
 
 def _route_segments(arr: np.ndarray):
@@ -110,6 +115,33 @@ def _dilate_preds(arr: np.ndarray, pad: int) -> np.ndarray:
         if pred == 0:
             continue
         out[max(0, i0 - pad) : min(N, i1 + pad)] = pred
+    return out.astype(np.int32)
+
+
+def _filter_unreliable_hills(arr: np.ndarray,
+                             lat: np.ndarray, lon: np.ndarray,
+                             alt: np.ndarray,
+                             min_dist_m: float = _HILL_MIN_DIST_M,
+                             max_slope_pct: float = _HILL_MAX_SLOPE_PCT) -> np.ndarray:
+    """Zero out hill segments that are too short or have unrealistic slopes."""
+    out = arr.copy()
+    for i0, i1, pred in _route_segments(arr):
+        if pred == 0:
+            continue
+        phi1 = math.radians(float(lat[i0]))
+        phi2 = math.radians(float(lat[min(i1, len(lat)) - 1]))
+        dphi = phi2 - phi1
+        dlam = math.radians(float(lon[min(i1, len(lon)) - 1]) - float(lon[i0]))
+        a = (math.sin(dphi / 2) ** 2 +
+             math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2)
+        dist_m = 6_371_000 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        if dist_m < min_dist_m:
+            out[i0:i1] = 0
+            continue
+        alt_change = abs(float(alt[min(i1, len(alt)) - 1]) - float(alt[i0]))
+        slope_pct = alt_change / dist_m * 100.0
+        if slope_pct > max_slope_pct:
+            out[i0:i1] = 0
     return out.astype(np.int32)
 
 
@@ -621,6 +653,7 @@ class MapWidget(QWidget):
         if gps_hills.any():
             hill_at_gps      = _filter_preds(gps_hills, h_min).astype(np.int32)
             hill_at_gps      = _merge_gaps(hill_at_gps, _MERGE_GAP_GPS)
+            hill_at_gps      = _filter_unreliable_hills(hill_at_gps, lat, lon, d.gps_altitude)
             #magnituda spremembe visine normalizirana na [0,1] (10 m = 100%) za popup
             hill_conf_at_gps = np.minimum(np.abs(hill_deltas) / 10.0, 1.0).astype(np.float32)
         else:
