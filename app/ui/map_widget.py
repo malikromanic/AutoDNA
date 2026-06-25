@@ -363,48 +363,50 @@ def _draw_colored_route(fmap, lat, lon,
                         weight_base: int, weight_event: int,
                         opacity_base: float, opacity_event: float,
                         task_name: str,
+                        seg_lookup: dict = None,
                         add_popup: bool = True):
-    """
-    Draw the GPS route as a sequence of colored PolyLine segments, one segment
-    per consecutive run of the same prediction.  Event segments get a heavier
-    line; 'none' segments get a thin grey line.
-
-    Also places a small filled circle at the START of each event segment so
-    transitions are easy to spot.
-    """
     N    = len(lat)
-    #razdeli polje napovedi na odseke z enako vrednostjo
     segs = _route_segments(pred_at_gps)
 
     for (i0, i1, pred) in segs:
-        #podaljsaj za eno tocko na vsak konec da sosednji odseki delijo oglisce
-        #brez tega nastanejo vizualne vrzeli med barvnimi prehodi na karti
         start  = max(0, i0)
         end    = min(N, i1 + 1)
         coords = [(float(lat[k]), float(lon[k])) for k in range(start, end)]
         if len(coords) < 2:
             continue
 
-        #dogodki so debelejsi in bolj neprosojni od navadnih odsekov
         color   = color_map[pred]
         weight  = weight_event if pred != 0 else weight_base
         opacity = opacity_event if pred != 0 else opacity_base
 
         kw: dict = dict(color=color, weight=weight, opacity=opacity)
 
-        #dodaj tooltip in popup samo za odseke z zaznamo (ne za ravne/ravninske)
         if add_popup and pred != 0:
             n_pts = i1 - i0
             avg_c = float(conf_at_gps[i0:i1].mean()) if n_pts > 0 else 0.0
+            i1c   = min(i1, N) - 1
+
+            #poisci ze izracunano metriko za ta odsek (kot zavoja ali naklon klanca)
+            seg = seg_lookup.get((i0, i1c)) if seg_lookup else None
+            metric_html  = ""
+            metric_short = ""
+            if seg and task_name == 'turn':
+                metric_html  = f"Angle&nbsp; <b>{seg['turn_angle_deg']:.0f}&deg;</b><br>"
+                metric_short = f" · {seg['turn_angle_deg']:.0f}°"
+            elif seg and task_name == 'hill':
+                metric_html  = f"Slope&nbsp; <b>{seg['slope_pct']:+.1f}%</b><br>"
+                metric_short = f" · {seg['slope_pct']:+.1f}%"
+
             kw['tooltip'] = (
                 f"{label_map[pred]}  "
-                f"({n_pts} GPS pts · {avg_c:.0%} GPS strength)"
+                f"({n_pts} GPS pts · {avg_c:.0%} GPS strength{metric_short})"
             )
             kw['popup'] = folium.Popup(
                 f"<div style='font-family:sans-serif;font-size:12px'>"
                 f"<b style='color:{color};font-size:14px'>{label_map[pred]}</b><br>"
                 f"<hr style='margin:4px 0'>"
                 f"GPS pts&nbsp; {i0}–{i1-1} ({n_pts} pts)<br>"
+                f"{metric_html}"
                 f"GPS strength&nbsp; <b>{avg_c:.1%}</b><br>"
                 f"Source&nbsp; GPS {task_name}"
                 f"</div>",
@@ -415,7 +417,6 @@ def _draw_colored_route(fmap, lat, lon,
 
         folium.PolyLine(coords, **kw).add_to(fmap)
 
-    #oznaci zacetek vsakega dogodka z belim robom krogom
     if add_popup:
         for (i0, i1, pred) in segs:
             if pred == 0 or i0 >= N:
@@ -427,10 +428,7 @@ def _draw_colored_route(fmap, lat, lon,
                 radius=5,
                 color='white', weight=1.5,
                 fill=True, fillColor=color_map[pred], fillOpacity=1.0,
-                tooltip=(
-                    f"▶ {label_map[pred]} starts here  "
-                    f"({n_pts} GPS pts · {avg_c:.0%})"
-                ),
+                tooltip=f"▶ {label_map[pred]} starts here  ({n_pts} GPS pts · {avg_c:.0%})",
             ).add_to(fmap)
 
 
@@ -626,7 +624,20 @@ class MapWidget(QWidget):
             #gps visina ni na voljo v csv-ju - klanci niso zaznani
             hill_at_gps      = np.zeros(N, dtype=np.int32)
             hill_conf_at_gps = np.zeros(N, dtype=np.float32)
-
+        
+        
+        
+        self.segments = _build_segments(
+            d.gps_timestamps, d.gps_lat, d.gps_lon, d.gps_speed,
+            d.gps_heading, d.gps_altitude,
+            turn_at_gps, turn_deltas,
+            hill_at_gps, hill_deltas,
+        )
+        
+        #hitra preslikava (gps_start, gps_end) -> segment, za uporabo v popup/tooltip
+        _seg_lookup = {(s['gps_start'], s['gps_end']): s for s in self.segments}
+        
+        
         #ustvari folium karto - sredinisce je povprecje gps koordinat
         fmap = folium.Map(
             location=[float(lat.mean()), float(lon.mean())],
@@ -636,7 +647,6 @@ class MapWidget(QWidget):
 
         #narisi pobarvano pot glede na izbrani nacin prikaza
         if mode == 'turns':
-            #samo zavoji: siva=naravnost, modra=levo, oranzna=desno
             _draw_colored_route(
                 fmap, lat, lon,
                 turn_at_gps, turn_conf_at_gps,
@@ -644,10 +654,10 @@ class MapWidget(QWidget):
                 _TURN_WBASE, _TURN_WEVENT,
                 opacity_base=0.45, opacity_event=0.92,
                 task_name='turn',
+                seg_lookup=_seg_lookup,
             )
-
+        
         elif mode == 'hills':
-            #samo klanci: siva=ravno, zelena=gor, vijolicna=dol
             _draw_colored_route(
                 fmap, lat, lon,
                 hill_at_gps, hill_conf_at_gps,
@@ -655,10 +665,10 @@ class MapWidget(QWidget):
                 _HILL_WBASE, _HILL_WEVENT,
                 opacity_base=0.45, opacity_event=0.92,
                 task_name='hill',
+                seg_lookup=_seg_lookup,
             )
-
+        
         else:
-            #kombinirano: klanci kot ozadnje (debela linija) + zavoji spredaj (tanka)
             _draw_colored_route(
                 fmap, lat, lon,
                 hill_at_gps, hill_conf_at_gps,
@@ -666,6 +676,7 @@ class MapWidget(QWidget):
                 weight_base=4, weight_event=10,
                 opacity_base=0.25, opacity_event=0.40,
                 task_name='hill',
+                seg_lookup=_seg_lookup,
                 add_popup=False,
             )
             _draw_colored_route(
@@ -675,6 +686,7 @@ class MapWidget(QWidget):
                 weight_base=3, weight_event=5,
                 opacity_base=0.45, opacity_event=0.92,
                 task_name='turn',
+                seg_lookup=_seg_lookup,
                 add_popup=True,
             )
 
@@ -750,12 +762,12 @@ class MapWidget(QWidget):
         fmap.get_root().html.add_child(folium.Element(legend))
 
         #sestavi odseke za regresijo in jih shrani na self.segments
-        self.segments = _build_segments(
+        """self.segments = _build_segments(
             d.gps_timestamps, d.gps_lat, d.gps_lon, d.gps_speed,
             d.gps_heading, d.gps_altitude,
             turn_at_gps, turn_deltas,
             hill_at_gps, hill_deltas,
-        )
+        )"""
 
         #zbrise staro zacasno datoteko in shrani novo - nato jo nalozi v webview
         if self._tmp_path and os.path.exists(self._tmp_path):

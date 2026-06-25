@@ -11,26 +11,14 @@ from PyQt6.QtWidgets import (
     QStatusBar, QMessageBox, QProgressDialog,
 )
 from PyQt6.QtGui import QKeySequence, QShortcut, QAction
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
-from app.ai_pipeline import models_exist, train_models
+from app.feature_loader import process_drive_fuel_features, load_store
+from app.fuel_model import fit_and_explain, save_stats_cache, load_stats_cache, compute_confidence
 from app.data_loader import DriveDataLoader
 from app.ui.sidebar import Sidebar
 from app.ui.dashboard_view import DashboardView
-
-
-#ucenje xgboost modelov v loceni niti da ne zamrzne gui
-class TrainThread(QThread):
-    progress = pyqtSignal(str, int)  #sporocilo in odstotek napredka
-    finished = pyqtSignal(str)       #sporocilo ob uspesnem zakljucku
-    error    = pyqtSignal(str)       #sporocilo ob napaki
-
-    def run(self):
-        try:
-            n, *_ = train_models(progress_cb=self.progress.emit)
-            self.finished.emit(f"Models trained on {n} windows. Ready to load drives.")
-        except Exception as exc:
-            self.error.emit(str(exc))
+from app.ui.drives_view import DrivesView
+from app.ui.stats_view import StatsView
 
 
 # ── Main window ───────────────────────────────────────────────────────────────
@@ -49,7 +37,11 @@ class AutoDNAApplication(QMainWindow):
         self._setup_menu()
         self._setup_shortcuts()
         self._apply_styles()
-
+        
+        cached = load_stats_cache()
+        if cached:
+            self.stats_view.set_result(cached)
+    
         self.status.showMessage("Ready — select a drive folder containing a GPS CSV.")
 
     def _create_ui(self):
@@ -73,10 +65,19 @@ class AutoDNAApplication(QMainWindow):
         self.dashboard_view = DashboardView()
         self.stack.addWidget(self.dashboard_view)
 
-        #slovar: ime_strani → indeks v skladu (zdaj samo dashboard)
+        self.drives_view = DrivesView()
+        self.drives_view.drive_selected.connect(self._load_drive_n)  # reuse existing _load_drive
+        self.stack.addWidget(self.drives_view)
+        
+        self.stats_view = StatsView()
+        self.stack.addWidget(self.stats_view)
+
         self._page_index = {
             "Dashboard": 0,
+            "Drives":    1,
+            "Stats":    2,
         }
+        
         self.stack.setCurrentIndex(0)
 
         #statusna vrstica na dnu okna za kratka sporocila
@@ -95,10 +96,10 @@ class AutoDNAApplication(QMainWindow):
         open_act.triggered.connect(self.sidebar._on_load_drive)
         file_menu.addAction(open_act)
 
-        train_act = QAction("Train Models…", self)
+        """train_act = QAction("Train Models…", self)
         train_act.setShortcut(QKeySequence("Ctrl+T"))
         train_act.triggered.connect(self._on_train_models)
-        file_menu.addAction(train_act)
+        file_menu.addAction(train_act)"""
 
         file_menu.addSeparator()
         exit_act = QAction("Exit", self)
@@ -120,13 +121,16 @@ class AutoDNAApplication(QMainWindow):
         help_menu.addAction(about_act)
 
     def _setup_shortcuts(self):
-        QShortcut(QKeySequence("Ctrl+1"), self).activated.connect(
-            lambda: self._on_page_changed("Dashboard")
+        QShortcut(QKeySequence("Ctrl+2"), self).activated.connect(
+            lambda: self._on_page_changed("Drives")
         )
 
     def _page_labels(self):
-        #seznam (id_strani, ime_strani) za gradnjo menija view
-        return [("Dashboard", "Dashboard")]
+        return [
+            ("Dashboard", "Dashboard"),
+            ("Drives",    "Drives"),
+            ("Stats",     "Stats"),
+        ]
 
     def _apply_styles(self):
         #globalni qss stil: temna menijska vrstica in statusna vrstica
@@ -144,35 +148,42 @@ class AutoDNAApplication(QMainWindow):
 
     # ── Events ────────────────────────────────────────────────────────────────
     def _on_drive_selected(self, drive_path: str):
-        self._load_drive(drive_path)
-
-    def _load_drive(self, drive_path: str):
-        #nalozi voznju in posodobi vse poglede z novimi podatki
+        self._load_drive_n(drive_path)
+    
+    def _load_drive_n(self, drive_path: str):
         try:
             self.status.showMessage("Loading drive…")
-            #ustvari naloznik in pozeni gps pipeline
             loader = DriveDataLoader(Path(drive_path))
             self.drive_data = loader.load_drive()
-
-            #posodobi dashboard z novimi podatki voznje
+    
             self.dashboard_view.set_drive_data(self.drive_data)
-
-            #posodobi statistiko v stranski vrstici
+    
             self.sidebar.set_drive_statistics(
                 self.drive_data.drive_distance_km,
                 self.drive_data.drive_duration_sec,
             )
-            #prikazi povzetek v statusni vrstici
+    
+            # ── fuel-regression features from STM .npz, non-fatal if missing ──
+            try:
+                features = process_drive_fuel_features(Path(drive_path), self.drive_data)
+                records  = load_store()
+                result = fit_and_explain(records, features)
+                self.stats_view.set_result(result)
+                save_stats_cache(result)
+            except FileNotFoundError as e:
+                print(f"[AutoDNA] Fuel features skipped: {e}")
+            except Exception:
+                print(f"[AutoDNA] Fuel feature extraction failed:\n{traceback.format_exc()}")
+                # drive still loads/displays normally even if this fails
+    
             self.status.showMessage(
                 f"Loaded: {self.drive_data.drive_name}  |  "
                 f"{self.drive_data.drive_distance_km:.1f} km  |  "
                 f"{self.drive_data.drive_duration_sec / 60:.1f} min"
             )
-            #preklopi na dashboard takoj po nalozitvi
             self._on_page_changed("Dashboard")
-
+    
         except Exception:
-            #zajemi celoten traceback in ga shrani v log datoteko za odpravljanje napak
             tb = traceback.format_exc()
             print(tb)
             (Path(__file__).parent.parent / "autodna_crash.log").write_text(tb)
@@ -182,49 +193,6 @@ class AutoDNAApplication(QMainWindow):
                 f"{tb[-600:]}\n\nFull trace in autodna_crash.log"
             )
 
-    def _on_train_models(self, callback=None):
-        #pozeni ucenje xgboost modelov v ozadje niti z napredkovnim dialogom
-        #callback je opcijsen - klice se po uspesnem ucenju (npr. nalozi voznju takoj zatem)
-
-        #modalni dialog blokira interakcijo z aplikacijo med ucenjem
-        dlg = QProgressDialog(
-            "Training XGBoost models on all available drives…",
-            "Cancel", 0, 100, self
-        )
-        dlg.setWindowTitle("AutoDNA — Training Models")
-        dlg.setWindowModality(Qt.WindowModality.WindowModal)
-        dlg.setMinimumDuration(0)
-        dlg.setValue(0)
-        dlg.show()
-
-        #ustvari delavsko nit - ucenje blokira gui ce tece v glavni niti
-        self._train_thread = TrainThread()
-
-        def on_progress(msg, pct):
-            #posodobi dialog z vmesnim sporocilom in odstotkom napredka
-            dlg.setLabelText(msg)
-            dlg.setValue(pct)
-
-        def on_done(msg):
-            #ucenje uspesno - zapri dialog, prikazi sporocilo in opcijsko pozeni callback
-            dlg.close()
-            self.status.showMessage(msg)
-            QMessageBox.information(self, "Training Complete", msg)
-            if callback:
-                callback()
-
-        def on_err(msg):
-            #napaka med ucenjem - zapri dialog in prikazi sporocilo o napaki
-            dlg.close()
-            self.status.showMessage(f"Training error: {msg}")
-            QMessageBox.critical(self, "Training Error", msg)
-
-        #prikljuci signale niti na ustrezne upravljavce
-        self._train_thread.progress.connect(on_progress)
-        self._train_thread.finished.connect(on_done)
-        self._train_thread.error.connect(on_err)
-        self._train_thread.start()
-
     def _on_page_changed(self, page_name: str):
         #preklopi aktivni pogled in oznaci ustrezen gumb v stranski vrstici
         idx = self._page_index.get(page_name)
@@ -232,6 +200,9 @@ class AutoDNAApplication(QMainWindow):
             self.stack.setCurrentIndex(idx)
             for pid, btn in self.sidebar.page_buttons.items():
                 btn.setChecked(pid == page_name)
+            # refresh drives list every time the tab is opened
+            if page_name == "Drives":
+                self.drives_view.refresh()
 
     def _show_about(self):
         #dialog o aplikaciji z osnovnimi tehnicnimi podatki

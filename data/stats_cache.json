@@ -1,0 +1,107 @@
+{
+  "success": true,
+  "global_importance": [
+    {
+      "key": "distance_km",
+      "label": "Trip distance",
+      "unit": "km",
+      "std_coef": -2.31386399269104,
+      "raw_coef": -0.3116869027604484
+    },
+    {
+      "key": "harsh_accel_rate",
+      "label": "Harsh acceleration",
+      "unit": "events/km",
+      "std_coef": -1.6604050397872925,
+      "raw_coef": -1.0932038249716043
+    },
+    {
+      "key": "harsh_braking_rate",
+      "label": "Harsh braking",
+      "unit": "events/km",
+      "std_coef": 1.3983575105667114,
+      "raw_coef": 1.4145833048297065
+    },
+    {
+      "key": "avg_speed_kmh",
+      "label": "Average speed",
+      "unit": "km/h",
+      "std_coef": 0.5549245476722717,
+      "raw_coef": 0.0537784979739592
+    },
+    {
+      "key": "speed_variability",
+      "label": "Speed variability",
+      "unit": "km/h",
+      "std_coef": -0.4774874448776245,
+      "raw_coef": -0.1119142964430682
+    },
+    {
+      "key": "rms_jerk",
+      "label": "Jerk (RMS)",
+      "unit": "mg/s",
+      "std_coef": -0.24809974431991577,
+      "raw_coef": -0.005235966247375362
+    },
+    {
+      "key": "idle_time_pct",
+      "label": "Idle time",
+      "unit": "%",
+      "std_coef": -0.1588059514760971,
+      "raw_coef": -0.03824930624983727
+    }
+  ],
+  "confidence": {
+    "harsh_accel_rate": {
+      "mean": -1.1105873584747314,
+      "lower": -2.7212023377418513,
+      "upper": 1.0707340955734235,
+      "ci_contains_zero": true,
+      "confidence": "low"
+    },
+    "harsh_braking_rate": {
+      "mean": 0.918533444404602,
+      "lower": -1.649525165557861,
+      "upper": 2.6468556463718413,
+      "ci_contains_zero": true,
+      "confidence": "low"
+    },
+    "rms_jerk": {
+      "mean": -0.22886978089809418,
+      "lower": -1.551832130551338,
+      "upper": 1.4875983595848077,
+      "ci_contains_zero": true,
+      "confidence": "low"
+    },
+    "avg_speed_kmh": {
+      "mean": 0.7209810018539429,
+      "lower": -0.6986664697527882,
+      "upper": 2.7270726740360236,
+      "ci_contains_zero": true,
+      "confidence": "low"
+    },
+    "speed_variability": {
+      "mean": -0.49032488465309143,
+      "lower": -2.0567696988582607,
+      "upper": 1.0534179896116245,
+      "ci_contains_zero": true,
+      "confidence": "low"
+    },
+    "idle_time_pct": {
+      "mean": -0.20305533707141876,
+      "lower": -1.7266171514987945,
+      "upper": 1.2474074631929397,
+      "ci_contains_zero": true,
+      "confidence": "low"
+    },
+    "distance_km": {
+      "mean": -2.3288631439208984,
+      "lower": -3.835802900791168,
+      "upper": -0.511473988741639,
+      "ci_contains_zero": false,
+      "confidence": "high"
+    }
+  },
+  "n_drives": 19,
+  "last_updated": "25. 06. 2026  22:15"
+}

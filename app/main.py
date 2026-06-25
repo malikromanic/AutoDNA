@@ -3,6 +3,8 @@ import os
 import traceback
 from pathlib import Path
 
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --no-sandbox"
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PyQt6.QtWebEngineWidgets import QWebEngineView 

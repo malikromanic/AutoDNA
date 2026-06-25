@@ -13,7 +13,9 @@ from pathlib import Path
 
 #seznam strani aplikacije: (id strani, prikazano ime z ikono)
 NAV_PAGES = [
-    ("Dashboard", "📊  Dashboard"),
+    ("Dashboard", "🗺️  Dashboard"),
+    ("Drives",    "🗂️  Drives"),
+    ("Stats",    "📈  Stats")
 ]
 
 
