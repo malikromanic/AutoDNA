@@ -11,11 +11,16 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QKeySequence, QShortcut, QAction
 
-from app.data_loader import DriveDataLoader
-from app.ui.sidebar import Sidebar
-from app.ui.dashboard_view import DashboardView
-from app.ui.elevation_view import ElevationView
+from AutoDNA.app.data_loader import DriveDataLoader
+from AutoDNA.app.feature_loader import process_drive_fuel_features, load_store
+from AutoDNA.app.fuel_model import fit_and_explain, save_stats_cache, load_stats_cache, compute_confidence
+from AutoDNA.app.data_loader import DriveDataLoader
 
+from AutoDNA.app.ui.sidebar import Sidebar
+from AutoDNA.app.ui.dashboard_view import DashboardView
+from AutoDNA.app.ui.elevation_view import ElevationView
+from AutoDNA.app.ui.drives_view import DrivesView
+from AutoDNA.app.ui.stats_view import StatsView
 
 class AutoDNAApplication(QMainWindow):
     """AutoDNA main window — sidebar + stacked views."""
@@ -31,8 +36,13 @@ class AutoDNAApplication(QMainWindow):
         self._setup_menu()
         self._setup_shortcuts()
         self._apply_styles()
+        
+        cached = load_stats_cache()
+        if cached:
+            self.stats_view.set_result(cached)
+    
+        self.status.showMessage("Ready — select a drive folder containing a GPS CSV.")
 
-    # ── UI construction ───────────────────────────────────────────────────────
     def _create_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
@@ -50,19 +60,28 @@ class AutoDNAApplication(QMainWindow):
 
         self.dashboard_view = DashboardView()
         self.elevation_view = ElevationView()
+        self.stats_view = StatsView()
+        self.drives_view = DrivesView()
+        self.drives_view.drive_selected.connect(self._load_drive_n)
+        
+        self.stack.addWidget(self.dashboard_view)
+        self.stack.addWidget(self.elevation_view)
+        self.stack.addWidget(self.drives_view)
+        self.stack.addWidget(self.stats_view)
 
-        for view in (self.dashboard_view, self.elevation_view):
-            self.stack.addWidget(view)
 
         self._page_index = {
             "Dashboard": 0,
             "Elevation": 1,
+            "Drives":    2,
+            "Stats":    3,
         }
+        
         self.stack.setCurrentIndex(0)
-
         self.status = QStatusBar()
         self.setStatusBar(self.status)
         self.status.showMessage("Ready — select a drive folder containing a GPS CSV.")
+
 
     def _setup_menu(self):
         mb = self.menuBar()
@@ -90,15 +109,22 @@ class AutoDNAApplication(QMainWindow):
         about_act.triggered.connect(self._show_about)
         help_menu.addAction(about_act)
 
+
     def _setup_shortcuts(self):
-        pairs = {"Ctrl+1": "Dashboard", "Ctrl+2": "Elevation"}
+        pairs = {"Ctrl+1": "Dashboard", "Ctrl+2": "Elevation", "Ctrl+3": "Drives", "Ctrl+4": "Stats"}
         for key, page in pairs.items():
             QShortcut(QKeySequence(key), self).activated.connect(
                 lambda p=page: self._on_page_changed(p)
             )
 
     def _page_labels(self):
-        return [("Dashboard", "Dashboard"), ("Elevation", "Elevation")]
+        return [
+                ("Dashboard", "Dashboard"), 
+                ("Elevation", "Elevation"),
+                ("Drives",    "Drives"),
+                ("Stats",     "Stats"),
+                ]
+
 
     def _apply_styles(self):
         self.setStyleSheet("""
@@ -117,7 +143,8 @@ class AutoDNAApplication(QMainWindow):
     def _on_drive_selected(self, drive_path: str):
         self._load_drive(drive_path)
 
-    def _load_drive(self, drive_path: str):
+
+    """def _load_drive(self, drive_path: str):
         try:
             self.status.showMessage("Loading drive… (looking up DEM elevation)")
             loader = DriveDataLoader(Path(drive_path))
@@ -129,12 +156,32 @@ class AutoDNAApplication(QMainWindow):
                 view.set_drive_data(self.drive_data)
 
             events = self._count_events()
+        self._load_drive_n(drive_path)"""
+    
+    
+    def _load_drive(self, drive_path: str):
+        try:
+            self.status.showMessage("Loading drive… (looking up DEM elevation)")
+            loader = DriveDataLoader(Path(drive_path))
+            #self.drive_data = loader.load_drive()
+            self.drive_data = loader.load_drive(
+                progress_cb=lambda msg: self.status.showMessage(msg)
+            )
+            #self.dashboard_view.set_drive_data(self.drive_data)
+            
+            for view in (self.dashboard_view, self.elevation_view):
+                view.set_drive_data(self.drive_data)
+                
+            
+            events = self._count_events()
+            d = self.drive_data
+
             self.sidebar.set_drive_statistics(
                 self.drive_data.drive_distance_km,
                 self.drive_data.drive_duration_sec,
                 events,
             )
-            d = self.drive_data
+    
             self.status.showMessage(
                 f"Loaded: {d.drive_name}  |  "
                 f"{d.drive_distance_km:.1f} km  |  "
@@ -144,7 +191,18 @@ class AutoDNAApplication(QMainWindow):
                 f"elevation: {d.elevation_source}"
             )
             self._on_page_changed("Dashboard")
-
+            
+            try:
+                features = process_drive_fuel_features(Path(drive_path), self.drive_data)
+                records  = load_store()
+                result = fit_and_explain(records, features)
+                self.stats_view.set_result(result)
+                save_stats_cache(result)
+            except FileNotFoundError as e:
+                print(f"[AutoDNA] Fuel features skipped: {e}")
+            except Exception:
+                print(f"[AutoDNA] Fuel feature extraction failed:\n{traceback.format_exc()}")
+                
         except Exception:
             tb = traceback.format_exc()
             print(tb)
@@ -161,6 +219,9 @@ class AutoDNAApplication(QMainWindow):
             self.stack.setCurrentIndex(idx)
             for pid, btn in self.sidebar.page_buttons.items():
                 btn.setChecked(pid == page_name)
+            # refresh drives list every time the tab is opened
+            if page_name == "Drives":
+                self.drives_view.refresh()
 
     def _count_events(self) -> int:
         if not self.drive_data:

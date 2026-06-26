@@ -13,6 +13,11 @@ def load_sensor_data(filepath):
         for sensor_name in raw.files:
             data = raw[sensor_name]
             
+            # divide accel x/y/z by 16 to correct left-shift alignment
+            if sensor_name == "accel":
+                data = data.copy()
+                data[:, 1:] = data[:, 1:] / 16.0
+                
             if isinstance(data, np.ndarray) and data.dtype == object:
                 data = data.item() if data.shape == () else data[0]
 
@@ -27,12 +32,7 @@ def load_sensor_data(filepath):
                     raise ValueError(
                         f"{sensor_name} must have columns: timestamp, x, y, z"
                     )
-                
-                # divide accel x/y/z by 16 to correct left-shift alignment
-                if sensor_name == "accel":
-                    data = data.copy()
-                    data[:, 1:] = data[:, 1:] / 16.0
-            
+                    
                 order = np.argsort(data[:, 0])
                 data = data[order]
                 ts = data[:, 0]
@@ -178,16 +178,18 @@ def save_preprocessed_data(processed, filepath):
     
     
 def _timestamps_to_seconds(ts):
-    """Convert timestamps to seconds if they look like milliseconds."""
+    """Convert timestamps to seconds"""
     ts = np.asarray(ts, dtype=float)
 
     diffs = np.diff(ts)
     diffs = diffs[diffs > 0]
+    
+    return ts / 1000.0
 
-    if len(diffs) > 0 and np.median(diffs) > 10:
+    """if len(diffs) > 0 and np.median(diffs) > 10:
         return ts / 1000.0
 
-    return ts
+    return ts"""
 
 
 def resample_sensors_to_common_grid(sensors, target_fs=None):

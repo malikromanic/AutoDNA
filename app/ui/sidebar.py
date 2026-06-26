@@ -13,6 +13,8 @@ from pathlib import Path
 NAV_PAGES = [
     ("Dashboard",  "📊  Dashboard"),
     ("Elevation",  "⛰️  Elevation"),
+    ("Drives",    "🗂️  Drives"),
+    ("Stats",    "📈  Stats"),
 ]
 
 

@@ -5,15 +5,17 @@
 
 import sys
 import traceback
+import os
 from pathlib import Path
 
-# Add repo root to path so `app.*` and `stm32.*` imports resolve
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --no-sandbox"
+
+#sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # QWebEngineView MUST be imported before QApplication is instantiated
 from PyQt6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
 from PyQt6.QtWidgets import QApplication
-from app.autodna_app import AutoDNAApplication
+from AutoDNA.app.autodna_app import AutoDNAApplication
 
 
 def main():
