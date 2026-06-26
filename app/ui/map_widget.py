@@ -1,9 +1,9 @@
 #============================================================================
 #map widget - gps prikaz poti pobarvane z gps-only detekcijo
 #
-#pristop: sprememba gps smeri zazna zavoj (l/d), sprememba gps visine zazna
-#klanec (gor/dol). xgboost napovedi so nalozene a ne zaprejo detekcije -
-#dostopne so na drivedata za prihodnje regresijsko delo.
+#pristop: sprememba gps smeri zazna zavoj (l/d); klanci (gor/dol) iz naklona
+#dem profila (data_loader.compute_hills) - naprava-gps visina se ignorira.
+#zaznani odseki so dostopni na MapWidget.segments za prihodnje regresijsko delo.
 #
 #nacini vizualizacije (neodvisni):
 #  zavoji / klanci / kombinirano - katera gps detekcija se obarva
@@ -40,17 +40,8 @@ _MIN_HILL_WIN   = 2    #~2 okni = ~2 s
 _MERGE_TURN_WIN = 4    #~4 okna pri vklopljenem filtriranju kratkih odsekov
 _MERGE_HILL_WIN = 4    #~4 s
 
-#gps detekcija zavojev - primarni vir za lokacijo zavoja in smer l/d
-_GPS_GATE_CONTEXT   = 8     #gps tocke na vsaki strani za merjenje spremembe smeri
-_GPS_GATE_THRESHOLD = 22.0  #stopinje - dvignjeno s 13 za zmanjsanje laznih zavojev na krivulji
-_GPS_GATE_MIN_SPEED = 5.0   #km/h - pod tem pragom je gps smer sum, ignoriramo
-
 #zapolnjevanje vrzeli - odseki iste vrste loceni z max toliko nicami se zdruzijo
 _MERGE_GAP_GPS = 5
-
-#gps detekcija klancev z nadmorsko visino - primarni vir za smer gor/dol
-_GPS_ALT_CONTEXT   = 15    #gps tocke na vsaki strani za merjenje spremembe visine
-_GPS_ALT_THRESHOLD = 2.5   #metri spremembe visine za potrditev klanca
 
 
 def _route_segments(arr: np.ndarray):
@@ -58,7 +49,8 @@ def _route_segments(arr: np.ndarray):
     #razstavi polje na odseke z enako vrednostjo - uporablja se za barvanje poti
     segs, i, N = [], 0, len(arr)
     while i < N:
-        p = int(arr[i]); j = i
+        p = int(arr[i])
+        j = i
         while j < N and int(arr[j]) == p:
             j += 1
         segs.append((i, j, p))
@@ -101,91 +93,7 @@ def _merge_gaps(arr: np.ndarray, max_gap: int) -> np.ndarray:
     return out.astype(np.int32)
 
 
-def _dilate_preds(arr: np.ndarray, pad: int) -> np.ndarray:
-    """Extend each non-zero run by pad GPS points on both sides without changing direction."""
-    out = arr.copy()
-    N = len(arr)
-    for i0, i1, pred in _route_segments(arr):
-        if pred == 0:
-            continue
-        out[max(0, i0 - pad) : min(N, i1 + pad)] = pred
-    return out.astype(np.int32)
-
-
-def _gps_detect_turns(gps_heading: np.ndarray, gps_speed: np.ndarray):
-    """
-    GPS-only turn detection using heading change.
-    Returns ((N,) int32 labels, (N,) float32 heading_delta_deg).
-    Labels: 0=straight, 1=left, 2=right.
-    heading_delta_deg: absolute heading-change magnitude at each GPS point (degrees).
-    """
-    N      = len(gps_heading)
-    out    = np.zeros(N, dtype=np.int32)
-    deltas = np.zeros(N, dtype=np.float32)
-
-    h_rad = np.radians(gps_heading.astype(np.float64))
-    k = np.ones(7) / 7
-    h_s = np.degrees(np.arctan2(
-        np.convolve(np.sin(h_rad), k, mode='same'),
-        np.convolve(np.cos(h_rad), k, mode='same'),
-    )) % 360
-
-    spd    = gps_speed.astype(np.float64)
-    moving = np.ones(N, dtype=bool) if spd.max() < 1.0 else spd >= _GPS_GATE_MIN_SPEED
-
-    for i in range(N):
-        if not moving[i]:
-            continue
-        i0 = max(0, i - _GPS_GATE_CONTEXT)
-        i1 = min(N - 1, i + _GPS_GATE_CONTEXT)
-        if i1 <= i0:
-            continue
-        delta      = (float(h_s[i1]) - float(h_s[i0]) + 180) % 360 - 180
-        deltas[i]  = abs(delta)
-        if abs(delta) >= _GPS_GATE_THRESHOLD:
-            out[i] = 2 if delta > 0 else 1   #2=desno, 1=levo
-
-    return out, deltas
-
-
-def _gps_detect_hills(gps_alt: np.ndarray, gps_speed: np.ndarray):
-    """
-    GPS-only hill detection using altitude change.
-    Returns ((N,) int32 labels, (N,) float32 alt_delta_m).
-    Labels: 0=flat, 1=uphill, 2=downhill.
-    alt_delta_m: signed altitude change at each GPS point (positive = uphill).
-    """
-    N      = len(gps_alt)
-    out    = np.zeros(N, dtype=np.int32)
-    deltas = np.zeros(N, dtype=np.float32)
-
-    if float(np.abs(gps_alt).max()) < 1.0:
-        return out, deltas
-
-    k     = np.ones(11) / 11
-    alt_s = np.convolve(gps_alt.astype(np.float64), k, mode='same')
-
-    spd    = gps_speed.astype(np.float64)
-    moving = np.ones(N, dtype=bool) if spd.max() < 1.0 else spd >= _GPS_GATE_MIN_SPEED
-
-    for i in range(N):
-        if not moving[i]:
-            continue
-        i0 = max(0, i - _GPS_ALT_CONTEXT)
-        i1 = min(N - 1, i + _GPS_ALT_CONTEXT)
-        if i1 <= i0:
-            continue
-        delta      = float(alt_s[i1]) - float(alt_s[i0])
-        deltas[i]  = delta
-        if delta >= _GPS_ALT_THRESHOLD:
-            out[i] = 1
-        elif delta <= -_GPS_ALT_THRESHOLD:
-            out[i] = 2
-
-    return out, deltas
-
-
-def _build_segments(gps_ts, gps_lat, gps_lon, gps_speed, gps_heading, gps_altitude,
+def _build_segments(gps_ts, gps_lat, gps_lon, gps_speed, gps_heading, gps_elevation,
                     turn_at_gps, turn_deltas,
                     hill_at_gps, hill_deltas):
     """
@@ -265,8 +173,8 @@ def _build_segments(gps_ts, gps_lat, gps_lon, gps_speed, gps_heading, gps_altitu
                     round(cum_hdg / seg_dist_m, 4) if seg_dist_m > 1.0 else 0.0
                 )
             else:
-                alt_start  = float(gps_altitude[i0])
-                alt_end    = float(gps_altitude[i1c])
+                alt_start  = float(gps_elevation[i0])
+                alt_end    = float(gps_elevation[i1c])
                 alt_change = alt_end - alt_start   #pozitivno = pridobljena visina
 
                 #najstrmejsa tocka v odseku - bolj diagnosticno od povprecnega naklona
@@ -280,7 +188,7 @@ def _build_segments(gps_ts, gps_lat, gps_lon, gps_speed, gps_heading, gps_altitu
                              math.cos(phi1k) * math.cos(phi2k) * math.sin(dlamk / 2) ** 2)
                     dm    = 6_371_000 * 2 * math.atan2(math.sqrt(ak), math.sqrt(1 - ak))
                     if dm > 0.5:   #ignoriraj gps sum pod enim metrom
-                        pt_slope = abs(float(gps_altitude[k + 1]) - float(gps_altitude[k])) / dm * 100
+                        pt_slope = abs(float(gps_elevation[k + 1]) - float(gps_elevation[k])) / dm * 100
                         if pt_slope > max_slope:
                             max_slope = pt_slope
 
@@ -604,36 +512,31 @@ class MapWidget(QWidget):
         t_min = _MERGE_TURN_WIN if merged else _MIN_TURN_WIN
         h_min = _MERGE_HILL_WIN if merged else _MIN_HILL_WIN
 
-        #gps-only detekcija zavojev - sprememba smeri zazna l/d
-        #gps je edini vir resnice, brez xgboost potrditve
-        gps_turns, turn_deltas = _gps_detect_turns(d.gps_heading, d.gps_speed)
-        turn_at_gps            = _filter_preds(gps_turns, t_min).astype(np.int32)
-        turn_at_gps            = _merge_gaps(turn_at_gps, _MERGE_GAP_GPS)
-        turn_at_gps            = _dilate_preds(turn_at_gps, 5)
-        #magnituda spremembe smeri normalizirana na [0,1] (90 stopinj = 100%) za popup
-        turn_conf_at_gps       = np.minimum(turn_deltas / 90.0, 1.0).astype(np.float32)
+        #zavoji iz gps smeri (data_loader.compute_turns) - histereza da daljse
+        #zvezne odseke (vstop-vrh-izstop), ne le vrh ovinka. enak vir kot dashboard.
+        turn_at_gps      = _filter_preds(d.turn_preds.astype(np.int32), t_min)
+        turn_at_gps      = _merge_gaps(turn_at_gps, _MERGE_GAP_GPS)
+        turn_conf_at_gps = d.turn_conf.astype(np.float32)
+        #magnituda spremembe smeri (deg) za metrike odsekov v _build_segments
+        turn_deltas      = np.abs(d.turn_rate).astype(np.float32)
 
-        #gps-only detekcija klancev - sprememba visine zazna gor/dol
-        gps_hills, hill_deltas = _gps_detect_hills(d.gps_altitude, d.gps_speed)
-        if gps_hills.any():
-            hill_at_gps      = _filter_preds(gps_hills, h_min).astype(np.int32)
-            hill_at_gps      = _merge_gaps(hill_at_gps, _MERGE_GAP_GPS)
-            #magnituda spremembe visine normalizirana na [0,1] (10 m = 100%) za popup
-            hill_conf_at_gps = np.minimum(np.abs(hill_deltas) / 10.0, 1.0).astype(np.float32)
-        else:
-            #gps visina ni na voljo v csv-ju - klanci niso zaznani
-            hill_at_gps      = np.zeros(N, dtype=np.int32)
-            hill_conf_at_gps = np.zeros(N, dtype=np.float32)
+        #klanci iz dem (digitalni model visin) - nas gps dem vir, izracunan v data_loader
+        #naklon ceste iz dem profila; naprava-gps visina se ignorira (nenatancna)
+        hill_at_gps      = _filter_preds(d.hill_preds.astype(np.int32), h_min)
+        hill_at_gps      = _merge_gaps(hill_at_gps, _MERGE_GAP_GPS)
+        hill_conf_at_gps = d.hill_conf.astype(np.float32)
+        #podpisan naklon (%) - placeholder za podpis _build_segments (klanci ga ne rabijo)
+        hill_deltas      = d.grade_pct.astype(np.float32)
         
         
         
         self.segments = _build_segments(
             d.gps_timestamps, d.gps_lat, d.gps_lon, d.gps_speed,
-            d.gps_heading, d.gps_altitude,
+            d.gps_heading, d.elevation_sm,
             turn_at_gps, turn_deltas,
             hill_at_gps, hill_deltas,
         )
-        
+
         #hitra preslikava (gps_start, gps_end) -> segment, za uporabo v popup/tooltip
         _seg_lookup = {(s['gps_start'], s['gps_end']): s for s in self.segments}
         
@@ -760,14 +663,6 @@ class MapWidget(QWidget):
         </div>
         """
         fmap.get_root().html.add_child(folium.Element(legend))
-
-        #sestavi odseke za regresijo in jih shrani na self.segments
-        """self.segments = _build_segments(
-            d.gps_timestamps, d.gps_lat, d.gps_lon, d.gps_speed,
-            d.gps_heading, d.gps_altitude,
-            turn_at_gps, turn_deltas,
-            hill_at_gps, hill_deltas,
-        )"""
 
         #zbrise staro zacasno datoteko in shrani novo - nato jo nalozi v webview
         if self._tmp_path and os.path.exists(self._tmp_path):

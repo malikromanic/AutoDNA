@@ -178,7 +178,7 @@ class ElevationView(QWidget):
         self._update_distribution_chart()
 
     def _update_metrics(self):
-        from app.ui.dashboard_view import _count_segments
+        from AutoDNA.app.ui.dashboard_view import _count_segments
         d = self.drive_data
         lv = self._metrics_card.value_labels
         avg_speed = d.drive_distance_km / max(d.drive_duration_sec / 3600, 1e-3)

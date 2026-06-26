@@ -225,7 +225,7 @@ class AutoDNAApplication(QMainWindow):
     def _count_events(self) -> int:
         if not self.drive_data:
             return 0
-        from app.ui.dashboard_view import _count_segments
+        from AutoDNA.app.ui.dashboard_view import _count_segments
         return (_count_segments(self.drive_data.turn_preds) +
                 _count_segments(self.drive_data.hill_preds))
 
