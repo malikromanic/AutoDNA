@@ -164,6 +164,7 @@ def compute_drive_features(sensors_raw: dict, drive_data) -> dict:
 
     # ── metadata ──────────────────────────────────────────────────────────
     features['distance_km'] = distance_km if distance_km else 0.0
+    features['_duration_min'] = drive_data.drive_duration_sec / 60.0
 
     print(f"[AutoDNA] Features: {', '.join(f'{k}={v:.2f}' for k, v in features.items())}")
     return features

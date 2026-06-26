@@ -59,6 +59,8 @@ class DriveData:
     elevation_gain_m:   float
     elevation_loss_m:   float
     elevation_source:   str
+    avg_fuel_l100km: float
+    fuel_consumption_l: float   
 
     @property
     def n_points(self) -> int:
@@ -111,6 +113,14 @@ class DriveDataLoader:
         _log(f"Hills flat/up/down: {np.bincount(hill_preds, minlength=3).tolist()}  "
              f"(+{gain:.0f}/-{loss:.0f} m)")
 
+        df_full = pd.read_csv(csv_path, sep=";", quotechar='"')
+        df_full.columns = df_full.columns.str.lower().str.strip()
+        df_full['seconds'] = pd.to_numeric(df_full['seconds'], errors='coerce')
+
+        dist_km  = cum[-1] / 1000.0
+        fuel_l   = _extract_fuel_l(df_full, dist_km)
+        avg_l100 = (fuel_l / dist_km * 100.0) if dist_km > _MIN_DIST_KM_FOR_AVG else 0.0
+
         return DriveData(
             gps_timestamps=ts,
             gps_lat=lat,
@@ -133,6 +143,8 @@ class DriveDataLoader:
             elevation_gain_m=gain,
             elevation_loss_m=loss,
             elevation_source=source,
+            avg_fuel_l100km=avg_l100,
+            fuel_consumption_l=fuel_l,
         )
 
     # ── File discovery ──────────────────────────────────────────────────────
@@ -206,3 +218,39 @@ def _compute_heading(lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
         heading[i] = (math.degrees(math.atan2(x, y)) + 360) % 360
     heading[0] = heading[1] if len(heading) > 1 else 0.0
     return heading
+
+
+_FALLBACK_FUEL_L100KM = 8.0
+_MIN_DIST_KM_FOR_AVG  = 0.1
+
+
+def _extract_fuel_l(df: pd.DataFrame, distance_km: float) -> float:
+    if 'pid' in df.columns:
+        pid_col = df['pid'].str.strip()
+
+        # 1. priority: 'Fuel used' PID — direct litre measurement
+        fuel_used_df = df[pid_col == 'Fuel used'].copy()
+        if not fuel_used_df.empty:
+            vals = pd.to_numeric(fuel_used_df['value'], errors='coerce').dropna()
+            if len(vals) >= 2:
+                total = float(vals.iloc[-1]) - float(vals.iloc[0])
+                if total > 0:
+                    print(f"[AutoDNA] Fuel: read from 'Fuel used' PID: {total:.4f} L")
+                    return total
+
+        # 2. priority: instant fuel rate — trapezoid integration
+        for pid_name in ('Calculated instant fuel rate', 'engine fuel rate'):
+            rate_df = df[pid_col.str.lower() == pid_name.lower()].copy()
+            if not rate_df.empty:
+                rate_df = rate_df.sort_values('seconds')
+                ts  = rate_df['seconds'].values.astype(np.float64)
+                val = pd.to_numeric(rate_df['value'], errors='coerce').fillna(0).values.astype(np.float64)
+                dt_h  = np.diff(ts) / 3600.0
+                total = float(np.sum(((val[:-1] + val[1:]) / 2.0) * dt_h))
+                if total > 0:
+                    print(f"[AutoDNA] Fuel: trapz integration of {pid_name!r}: {total:.4f} L")
+                    return total
+
+    # 3. fallback estimate
+    print(f"[AutoDNA] Fuel: no PID data — estimating at {_FALLBACK_FUEL_L100KM} L/100km")
+    return distance_km * _FALLBACK_FUEL_L100KM / 100.0

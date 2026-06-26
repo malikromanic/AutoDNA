@@ -35,7 +35,7 @@ MIN_DRIVES_FOR_FIT = 1
 # Features excluded from the model even if present in the store.
 # inv_distance_km is kept as a modelling input but we don't show it
 # to the user since "1 / (km+1)" is not self-explanatory.
-_HIDDEN_FROM_DISPLAY = {'inv_distance_km'}
+_HIDDEN_FROM_DISPLAY = {'inv_distance_km', '_duration_min'}
 
 # Human-readable labels and units for each feature key.
 # Any feature not listed here will still be shown, just without a label.

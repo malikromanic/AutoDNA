@@ -76,8 +76,8 @@ class DriveCard(QFrame):
         feats = self.record.get('features', {})
         stats = [
             ("Distance",  f"{feats.get('distance_km', 0):.1f} km",                   "#1565c0"),
-            ("Duration",  self._format_duration(feats.get('duration_min')),           "#7b1fa2"),
-            ("Fuel",      f"{self.record.get('fuel_l100km', 0):.1f} L/100km",         "#2e7d32"),
+            ("Duration",  self._format_duration(feats),                              "#7b1fa2"),
+            ("Fuel",      f"{self.record.get('fuel_l100km', 0):.1f} L/100km",        "#2e7d32"),
         ]
 
         for label_text, value_text, color in stats:
@@ -132,8 +132,9 @@ class DriveCard(QFrame):
             return ts
 
     @staticmethod
-    def _format_duration(duration_min) -> str:
-        if duration_min is None or duration_min <= 0:
+    def _format_duration(feats: dict) -> str:
+        duration_min = feats.get('_duration_min') or feats.get('duration_min')
+        if not duration_min or duration_min <= 0:
             return '—'
         mins = int(round(duration_min))
         if mins >= 60:

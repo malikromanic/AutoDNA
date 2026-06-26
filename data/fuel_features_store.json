@@ -201,87 +201,13 @@
       "harsh_accel_rate": 0.0,
       "harsh_braking_rate": 0.0,
       "rms_jerk": 131.94447354393665,
-      "avg_speed_kmh": 32.95344924926758,
-      "speed_variability": 23.37276268005371,
-      "idle_time_pct": 14.596273291925465,
-      "distance_km": 3.647582286718955
+      "avg_speed_kmh": 32.7435417175293,
+      "speed_variability": 20.68764877319336,
+      "idle_time_pct": 9.239130434782608,
+      "distance_km": 3.6475822866947065,
+      "_duration_min": 3.7573238400000264
     },
-    "fuel_l100km": 6.062232226355309,
-    "timestamp": "2026-06-25T21:54:23"
-  },
-  {
-    "drive_name": "center-salek",
-    "drive_path": "C:\\Users\\mihal\\OneDrive - Univerza v Mariboru\\FAKS\\4 SEMESTER\\PROJEKT\\PROJEKT_REPO\\AutoDNA\\data\\drive_data\\malik-toyota\\center-salek",
-    "features": {
-      "harsh_accel_rate": 6.2435237517414555,
-      "harsh_braking_rate": 4.0399271334797655,
-      "rms_jerk": 184.4990871281752,
-      "avg_speed_kmh": 25.347558975219727,
-      "speed_variability": 13.969889640808105,
-      "idle_time_pct": 11.090909090909092,
-      "distance_km": 2.7228213867622957
-    },
-    "fuel_l100km": 8.761149718852375,
-    "timestamp": "2026-06-25T22:15:09"
-  },
-  {
-    "drive_name": "Lipje-Velenje",
-    "drive_path": "C:\\Users\\mihal\\OneDrive - Univerza v Mariboru\\FAKS\\4 SEMESTER\\PROJEKT\\PROJEKT_REPO\\AutoDNA\\data\\drive_data\\malik-toyota\\lipje-velenje",
-    "features": {
-      "harsh_accel_rate": 2.4331133611743585,
-      "harsh_braking_rate": 0.6951752460498167,
-      "rms_jerk": 215.2344319177537,
-      "avg_speed_kmh": 27.1260986328125,
-      "speed_variability": 12.426384925842285,
-      "idle_time_pct": 5.446623093681917,
-      "distance_km": 5.753944811368265
-    },
-    "fuel_l100km": 3.7010439830870783,
-    "timestamp": "2026-06-25T22:15:18"
-  },
-  {
-    "drive_name": "Lipje -\u017dalec",
-    "drive_path": "C:\\Users\\mihal\\OneDrive - Univerza v Mariboru\\FAKS\\4 SEMESTER\\PROJEKT\\PROJEKT_REPO\\AutoDNA\\data\\drive_data\\malik-toyota\\lipje-zalec",
-    "features": {
-      "harsh_accel_rate": 0.7712582019120426,
-      "harsh_braking_rate": 0.48203637619502665,
-      "rms_jerk": 235.21030290243843,
-      "avg_speed_kmh": 48.89313507080078,
-      "speed_variability": 20.74753761291504,
-      "idle_time_pct": 3.8873239436619715,
-      "distance_km": 31.11798349826438
-    },
-    "fuel_l100km": 2.022397539728141,
-    "timestamp": "2026-06-25T22:15:31"
-  },
-  {
-    "drive_name": "Velenje-Lipje",
-    "drive_path": "C:\\Users\\mihal\\OneDrive - Univerza v Mariboru\\FAKS\\4 SEMESTER\\PROJEKT\\PROJEKT_REPO\\AutoDNA\\data\\drive_data\\malik-toyota\\velenje-lipje",
-    "features": {
-      "harsh_accel_rate": 3.100236130311989,
-      "harsh_braking_rate": 2.583530108593324,
-      "rms_jerk": 239.12178894760436,
-      "avg_speed_kmh": 34.82140350341797,
-      "speed_variability": 23.545360565185547,
-      "idle_time_pct": 12.743972445464982,
-      "distance_km": 5.8060093629670035
-    },
-    "fuel_l100km": 7.739716762195753,
-    "timestamp": "2026-06-25T22:15:40"
-  },
-  {
-    "drive_name": "\u017dalec-Gorica",
-    "drive_path": "C:\\Users\\mihal\\OneDrive - Univerza v Mariboru\\FAKS\\4 SEMESTER\\PROJEKT\\PROJEKT_REPO\\AutoDNA\\data\\drive_data\\malik-toyota\\zalec-gorica",
-    "features": {
-      "harsh_accel_rate": 1.460289435834125,
-      "harsh_braking_rate": 1.1560624700353488,
-      "rms_jerk": 262.20495202928737,
-      "avg_speed_kmh": 50.10852813720703,
-      "speed_variability": 23.581768035888672,
-      "idle_time_pct": 5.456634118322802,
-      "distance_km": 16.435098009382692
-    },
-    "fuel_l100km": 5.270120780726781,
-    "timestamp": "2026-06-25T22:15:48"
+    "fuel_l100km": 6.06223222639561,
+    "timestamp": "2026-06-26T23:47:03"
   }
 ]

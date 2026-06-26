@@ -25,9 +25,9 @@ _GREEN  = "#27ae60"
 _YELLOW = "#f0a500"
 
 _TAKEAWAY_DESCRIPTIONS = {
-    'harsh_accel_rate':   ("Avoid sudden acceleration",  "Sharp acceleration wastes fuel and stresses the engine."),
-    'harsh_braking_rate': ("Avoid harsh braking",        "Late braking converts kinetic energy to heat rather than momentum."),
-    'rms_jerk':           ("Drive more smoothly",        "Frequent speed changes increase fuel consumption."),
+    'harsh_accel_rate':   ("Avoid sudden acceleration",  "Sharp acceleration wastes fuel."),
+    'harsh_braking_rate': ("Avoid harsh braking",        "Sharp braking wastes fuel."),
+    'rms_jerk':           ("Drive more smoothly",        "Jerk = frequent speed changes. Drive more smoothly to reduce."),
     'accel_x_std':        ("Maintain steady speed",      "Inconsistent throttle leads to higher overall consumption."),
     'avg_speed_kmh':      ("Average speed matters",      "Urban stop-go driving is less efficient than a steady cruise."),
     'pct_turning':        ("Route characteristics",      "Winding routes with frequent turns require more acceleration cycles."),
