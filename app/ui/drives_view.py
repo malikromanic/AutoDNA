@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QCursor
 
-from app.feature_loader import load_store, save_store
+from AutoDNA.app.feature_loader import load_store, save_store
 
 
 class DriveCard(QFrame):

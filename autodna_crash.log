@@ -1,12 +1,12 @@
 Traceback (most recent call last):
-  File "c:\users\mihal\onedrive - univerza v mariboru\faks\4 semester\projekt\projekt_repo\autodna\app\main.py", line 28, in <module>
+  File "c:\users\mihal\onedrive - univerza v mariboru\faks\4 semester\projekt\projekt_repo\autodna\app\main.py", line 34, in <module>
     main()
-  File "c:\users\mihal\onedrive - univerza v mariboru\faks\4 semester\projekt\projekt_repo\autodna\app\main.py", line 20, in main
+  File "c:\users\mihal\onedrive - univerza v mariboru\faks\4 semester\projekt\projekt_repo\autodna\app\main.py", line 26, in main
     window = AutoDNAApplication()
              ^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\mihal\OneDrive - Univerza v Mariboru\FAKS\4 SEMESTER\PROJEKT\PROJEKT_REPO\AutoDNA\app\autodna_app.py", line 52, in __init__
+  File "C:\Users\mihal\OneDrive - Univerza v Mariboru\FAKS\4 SEMESTER\PROJEKT\PROJEKT_REPO\AutoDNA\app\autodna_app.py", line 34, in __init__
     self._create_ui()
-  File "C:\Users\mihal\OneDrive - Univerza v Mariboru\FAKS\4 SEMESTER\PROJEKT\PROJEKT_REPO\AutoDNA\app\autodna_app.py", line 81, in _create_ui
-    self.drives_view.drive_selected.connect(self._load_drive)  # reuse existing _load_drive
-                                            ^^^^^^^^^^^^^^^^
-AttributeError: 'AutoDNAApplication' object has no attribute '_load_drive'. Did you mean: '_load_drive_n'?
+  File "C:\Users\mihal\OneDrive - Univerza v Mariboru\FAKS\4 SEMESTER\PROJEKT\PROJEKT_REPO\AutoDNA\app\autodna_app.py", line 64, in _create_ui
+    self.drives_view.drive_selected.connect(self._load_drive_n)
+                                            ^^^^^^^^^^^^^^^^^^
+AttributeError: 'AutoDNAApplication' object has no attribute '_load_drive_n'. Did you mean: '_load_drive'?

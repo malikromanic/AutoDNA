@@ -9,7 +9,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 import numpy as np
 
-from app.ui.map_widget import MapWidget
+from AutoDNA.app.ui.map_widget import MapWidget
 
 
 # ── Segment helpers (a "segment" is a run of the same non-zero class) ────────

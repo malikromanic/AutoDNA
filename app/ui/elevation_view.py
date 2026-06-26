@@ -9,7 +9,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 import numpy as np
 
-from app.gps_analysis import (
+from AutoDNA.app.gps_analysis import (
     TURN_ENTER_DEG, TURN_WINDOW_M, HILL_GRADE_THRESHOLD, HILL_GRADE_WINDOW_M,
 )
 

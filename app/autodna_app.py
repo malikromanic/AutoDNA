@@ -13,8 +13,7 @@ from PyQt6.QtGui import QKeySequence, QShortcut, QAction
 
 from AutoDNA.app.data_loader import DriveDataLoader
 from AutoDNA.app.feature_loader import process_drive_fuel_features, load_store
-from AutoDNA.app.fuel_model import fit_and_explain, save_stats_cache, load_stats_cache, compute_confidence
-from AutoDNA.app.data_loader import DriveDataLoader
+from AutoDNA.app.fuel_model import fit_and_explain, save_stats_cache, load_stats_cache
 
 from AutoDNA.app.ui.sidebar import Sidebar
 from AutoDNA.app.ui.dashboard_view import DashboardView
@@ -62,7 +61,7 @@ class AutoDNAApplication(QMainWindow):
         self.elevation_view = ElevationView()
         self.stats_view = StatsView()
         self.drives_view = DrivesView()
-        self.drives_view.drive_selected.connect(self._load_drive_n)
+        self.drives_view.drive_selected.connect(self._load_drive)
         
         self.stack.addWidget(self.dashboard_view)
         self.stack.addWidget(self.elevation_view)

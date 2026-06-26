@@ -18,8 +18,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from app.elevation import ElevationProvider, get_default_provider
-from app.gps_analysis import (
+from AutoDNA.app.elevation import ElevationProvider, get_default_provider
+from AutoDNA.app.gps_analysis import (
     cumulative_distance,
     compute_turns,
     compute_hills,
