@@ -34,6 +34,12 @@ _HILL_LABEL = {0: 'Flat', 1: 'Uphill', 2: 'Downhill'}
 _HILL_WBASE = 3
 _HILL_WEVENT = 6
 
+#fuel-record performance: 1=rekord (zelena), 2=blizu rekorda (oranzna), 3=slabse (rdeca)
+_PERF_COLOR = {0: '#9e9e9e', 1: '#27ae60', 2: '#f0a500', 3: '#e74c3c'}
+_PERF_LABEL = {0: '—', 1: 'Record', 2: 'Close to record', 3: 'Worse than record'}
+_PERF_WBASE = 3
+_PERF_WEVENT = 7
+
 #minimalne dolzine zaporedja - krajse se steje za sum
 _MIN_TURN_WIN   = 2    #~2 okni (~2 s)
 _MIN_HILL_WIN   = 2    #~2 okni = ~2 s
@@ -378,9 +384,11 @@ class MapWidget(QWidget):
         #ustvari tri gumbe - vsak ima svojo barvo ko je aktiven
         self._mode_btns: dict[str, QPushButton] = {}
         for mid, mlbl, col in [
-            ('turns',    'Turns',    '#1565c0'),
-            ('hills',    'Hills',    '#2e7d32'),
-            ('combined', 'Combined', '#6a1b9a'),
+            ('turns',            'Turns',       '#1565c0'),
+            ('hills',            'Hills',       '#2e7d32'),
+            ('combined',         'Combined',    '#6a1b9a'),
+            ('turns-performance', 'Turns ⛽',    '#16a085'),
+            ('hills-performance', 'Hills ⛽',    '#16a085'),
         ]:
             btn = QPushButton(mlbl)
             btn.setCheckable(True)
@@ -548,6 +556,13 @@ class MapWidget(QWidget):
             tiles='OpenStreetMap',
         )
 
+        #fuel-record performance per gps tocka (nastavi segment_records.evaluate_drive)
+        turn_perf = getattr(d, 'turn_perf', None)
+        hill_perf = getattr(d, 'hill_perf', None)
+        turn_perf = np.zeros(N, dtype=np.int32) if turn_perf is None else turn_perf.astype(np.int32)
+        hill_perf = np.zeros(N, dtype=np.int32) if hill_perf is None else hill_perf.astype(np.int32)
+        perf_conf = np.ones(N, dtype=np.float32)
+
         #narisi pobarvano pot glede na izbrani nacin prikaza
         if mode == 'turns':
             _draw_colored_route(
@@ -570,7 +585,29 @@ class MapWidget(QWidget):
                 task_name='hill',
                 seg_lookup=_seg_lookup,
             )
-        
+
+        elif mode == 'turns-performance':
+            _draw_colored_route(
+                fmap, lat, lon,
+                turn_perf, perf_conf,
+                _PERF_COLOR, _PERF_LABEL,
+                _PERF_WBASE, _PERF_WEVENT,
+                opacity_base=0.40, opacity_event=0.95,
+                task_name='perf',
+                seg_lookup=None,
+            )
+
+        elif mode == 'hills-performance':
+            _draw_colored_route(
+                fmap, lat, lon,
+                hill_perf, perf_conf,
+                _PERF_COLOR, _PERF_LABEL,
+                _PERF_WBASE, _PERF_WEVENT,
+                opacity_base=0.40, opacity_event=0.95,
+                task_name='perf',
+                seg_lookup=None,
+            )
+
         else:
             _draw_colored_route(
                 fmap, lat, lon,
@@ -630,6 +667,14 @@ class MapWidget(QWidget):
                      f"{_swatch('#6a1b9a')}Downhill")
             title = "AutoDNA — Hills"
             stat  = f"{n_hills} / {N} GPS pts with hill prediction"
+        elif mode in ('turns-performance', 'hills-performance'):
+            rows  = (f"{_swatch('#27ae60')}Record (your best)<br>"
+                     f"{_swatch('#f0a500')}Close to record<br>"
+                     f"{_swatch('#e74c3c')}Worse than record")
+            kind  = 'Turn' if mode == 'turns-performance' else 'Hill'
+            title = f"AutoDNA — {kind} Fuel Performance"
+            stat  = (f"potential savings: {getattr(d, 'total_savings_l', 0.0):.3f} L "
+                     f"vs your records")
         else:
             rows  = (
                 f"<b style='font-size:10px;color:#555'>Background = Hill</b><br>"

@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -60,7 +60,15 @@ class DriveData:
     elevation_loss_m:   float
     elevation_source:   str
     avg_fuel_l100km: float
-    fuel_consumption_l: float   
+    fuel_consumption_l: float
+    fuel_rate_l_s:   np.ndarray   # (N,)  instant fuel rate per GPS point (L/s)
+
+    # ── Per-segment fuel records (filled by segment_records.evaluate_drive) ──
+    turn_perf:         np.ndarray | None = None  # (N,) 0=none 1=record 2=close 3=worse
+    hill_perf:         np.ndarray | None = None  # (N,) 0=none 1=record 2=close 3=worse
+    total_savings_l:   float = 0.0               # potential fuel saved vs records
+    savings_breakdown: list = field(default_factory=list)  # per-segment detail dicts
+    vehicle:           str = "default"
 
     @property
     def n_points(self) -> int:
@@ -120,6 +128,7 @@ class DriveDataLoader:
         dist_km  = cum[-1] / 1000.0
         fuel_l   = _extract_fuel_l(df_full, dist_km)
         avg_l100 = (fuel_l / dist_km * 100.0) if dist_km > _MIN_DIST_KM_FOR_AVG else 0.0
+        fuel_rate = _fuel_rate_per_point(df_full, ts, fuel_l)
 
         return DriveData(
             gps_timestamps=ts,
@@ -145,6 +154,7 @@ class DriveDataLoader:
             elevation_source=source,
             avg_fuel_l100km=avg_l100,
             fuel_consumption_l=fuel_l,
+            fuel_rate_l_s=fuel_rate,
         )
 
     # ── File discovery ──────────────────────────────────────────────────────
@@ -254,3 +264,28 @@ def _extract_fuel_l(df: pd.DataFrame, distance_km: float) -> float:
     # 3. fallback estimate
     print(f"[AutoDNA] Fuel: no PID data — estimating at {_FALLBACK_FUEL_L100KM} L/100km")
     return distance_km * _FALLBACK_FUEL_L100KM / 100.0
+
+
+def _fuel_rate_per_point(df: pd.DataFrame, ts: np.ndarray, total_fuel_l: float) -> np.ndarray:
+    """
+    Instant fuel rate (L/s) sampled at each GPS timestamp, for per-segment
+    consumption. Prefers the OBD2 instant-rate PID; otherwise spreads the
+    drive's total fuel uniformly over its duration (flat rate).
+    """
+    n = len(ts)
+    if 'pid' in df.columns:
+        pid = df['pid'].str.strip()
+        for name in ('Calculated instant fuel rate', 'engine fuel rate'):
+            r = df[pid.str.lower() == name.lower()].copy()
+            if not r.empty:
+                r = r.sort_values('seconds')
+                rt = r['seconds'].values.astype(np.float64)
+                rv = pd.to_numeric(r['value'], errors='coerce').fillna(0).values.astype(np.float64)
+                if len(rt) >= 2 and np.ptp(rt) > 0:
+                    lph = np.interp(ts, rt, rv)          # L/h at each GPS point
+                    return (lph / 3600.0).astype(np.float32)  # → L/s
+
+    # fallback: uniform rate so segments are at least comparable within a drive
+    span = float(ts[-1] - ts[0]) if n >= 2 else 0.0
+    flat = (total_fuel_l / span) if span > 0 else 0.0
+    return np.full(n, flat, dtype=np.float32)

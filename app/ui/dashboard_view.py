@@ -131,8 +131,10 @@ class DashboardView(QWidget):
         self.distance_card = MetricCard("Distance", "—", "km", "#0066cc")
         self.duration_card = MetricCard("Duration", "—", "minutes", "#8e44ad")
         self.events_card = MetricCard("Detected Events", "—", "turns + hills", "#e67e22")
+        self.savings_card = MetricCard("Potential Savings", "—", "liters vs your records", "#16a085")
 
-        for card in [self.safety_card, self.distance_card, self.duration_card, self.events_card]:
+        for card in [self.safety_card, self.distance_card, self.duration_card,
+                     self.events_card, self.savings_card]:
             cards_layout.addWidget(card)
 
         layout.addLayout(cards_layout)
@@ -330,6 +332,11 @@ class DashboardView(QWidget):
         safety = max(55, min(100, int(100 - event_density * 6)))
         color = "#27ae60" if safety >= 85 else "#e67e22" if safety >= 70 else "#e74c3c"
         self.safety_card.set_value(str(safety), color)
+
+        # potential fuel saved vs the per-vehicle records (lower = more efficient)
+        savings = float(getattr(d, "total_savings_l", 0.0))
+        s_color = "#27ae60" if savings <= 0.05 else "#e67e22" if savings <= 0.3 else "#e74c3c"
+        self.savings_card.set_value(f"{savings:.2f}", s_color)
 
     def _update_insights(self):
         d = self.drive_data

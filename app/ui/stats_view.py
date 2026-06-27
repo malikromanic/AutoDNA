@@ -275,6 +275,36 @@ class StatsView(QWidget):
         self._subtitle.setStyleSheet("color: #888; font-size: 12px;")
         self._root.addWidget(self._subtitle)
 
+        # ── Potential fuel savings (per-segment records) ─────────────────────
+        sav_frame = QFrame()
+        sav_frame.setStyleSheet(
+            "QFrame { background: #11261d; border: 1px solid #1f5d3f;"
+            " border-left: 4px solid #27ae60; border-radius: 8px; }"
+        )
+        sav_layout = QVBoxLayout(sav_frame)
+        sav_layout.setContentsMargins(14, 12, 14, 12)
+        sav_layout.setSpacing(6)
+
+        self._savings_title = QLabel("Potential Savings")
+        _stf = QFont()
+        _stf.setPointSize(14)
+        _stf.setBold(True)
+        self._savings_title.setFont(_stf)
+        self._savings_title.setStyleSheet("color: #2ecc71; border: none;")
+        sav_layout.addWidget(self._savings_title)
+
+        self._savings_sub = QLabel("Load a drive to compare it against your records.")
+        self._savings_sub.setWordWrap(True)
+        self._savings_sub.setStyleSheet("color: #aaa; font-size: 11px; border: none;")
+        self._savings_sub.setTextFormat(Qt.TextFormat.RichText)
+        sav_layout.addWidget(self._savings_sub)
+
+        self._savings_box = QVBoxLayout()
+        self._savings_box.setSpacing(2)
+        sav_layout.addLayout(self._savings_box)
+
+        self._root.addWidget(sav_frame)
+
         # key takeaways
         sep0 = QFrame(); sep0.setFrameShape(QFrame.Shape.HLine)
         sep0.setStyleSheet("color: #333;"); self._root.addWidget(sep0)
@@ -326,6 +356,45 @@ class StatsView(QWidget):
         self._root.addStretch()
 
     # ── public API ─────────────────────────────────────────────────────────
+
+    def set_savings(self, d):
+        """Show per-segment fuel-record savings for the loaded drive."""
+        total     = float(getattr(d, "total_savings_l", 0.0))
+        breakdown = list(getattr(d, "savings_breakdown", []) or [])
+        worse     = sorted(
+            (b for b in breakdown if b.get("perf", 1) >= 2),
+            key=lambda b: b.get("savings_l", 0.0), reverse=True,
+        )
+
+        self._savings_title.setText(f"Potential Savings:  {total:.2f} L")
+        self._savings_sub.setText(
+            f"vs your records &middot; {len(worse)} of {len(breakdown)} segments "
+            f"above their record. A record is the lowest fuel rate seen for that "
+            f"turn/hill bucket."
+        )
+
+        while self._savings_box.count():
+            it = self._savings_box.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+
+        if not worse:
+            ok = QLabel("Every segment matched or beat your records — nice driving!")
+            ok.setStyleSheet("color: #2ecc71; font-size: 11px; border: none;")
+            self._savings_box.addWidget(ok)
+            return
+
+        for b in worse[:8]:
+            lbl = QLabel(
+                f"<span style='color:#e74c3c;font-weight:bold'>+{b['savings_l']:.3f} L</span>"
+                f" &nbsp; <span style='color:#ddd'>{b['bucket']}</span>"
+                f" &nbsp; <span style='color:#888'>"
+                f"{b['rate_l_s'] * 1000:.2f} vs {b['record_l_s'] * 1000:.2f} mL/s"
+                f" &middot; {b['duration_s']:.0f}s</span>"
+            )
+            lbl.setTextFormat(Qt.TextFormat.RichText)
+            lbl.setStyleSheet("font-size: 11px; border: none;")
+            self._savings_box.addWidget(lbl)
 
     def set_result(self, result: dict):
         """Update view with result dict from fuel_model.fit_and_explain() or load_stats_cache()."""

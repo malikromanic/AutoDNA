@@ -13,13 +13,38 @@ from PyQt6.QtGui import QKeySequence, QShortcut, QAction
 
 from AutoDNA.app.data_loader import DriveDataLoader
 from AutoDNA.app.feature_loader import process_drive_fuel_features, load_store
-from AutoDNA.app.fuel_model import fit_and_explain, save_stats_cache, load_stats_cache
+from AutoDNA.app.fuel_model import fit_and_explain, save_stats_cache
+from AutoDNA.app.segment_records import evaluate_drive
 
 from AutoDNA.app.ui.sidebar import Sidebar
 from AutoDNA.app.ui.dashboard_view import DashboardView
 from AutoDNA.app.ui.elevation_view import ElevationView
 from AutoDNA.app.ui.drives_view import DrivesView
 from AutoDNA.app.ui.stats_view import StatsView
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _resolve_drive_path(p) -> Path:
+    """
+    Resolve a stored drive path on THIS machine.
+
+    Drive paths saved in the store may be absolute paths from another teammate's
+    computer. If the path doesn't exist locally, re-root it onto this repo's
+    data/ folder (the drive folders are committed, so they resolve everywhere).
+    """
+    path = Path(p)
+    if path.exists():
+        return path
+    parts = path.parts
+    for i in range(len(parts) - 1):
+        if parts[i] == "data" and parts[i + 1] == "drive_data":
+            candidate = _REPO_ROOT.joinpath(*parts[i:])
+            if candidate.exists():
+                return candidate
+            break
+    return path  # unchanged → caller surfaces a clear "not found" error
+
 
 class AutoDNAApplication(QMainWindow):
     """AutoDNA main window — sidebar + stacked views."""
@@ -35,11 +60,10 @@ class AutoDNAApplication(QMainWindow):
         self._setup_menu()
         self._setup_shortcuts()
         self._apply_styles()
-        
-        cached = load_stats_cache()
-        if cached:
-            self.stats_view.set_result(cached)
-    
+
+        # Start fresh: do not auto-load/show stored stats on launch. Stored drives
+        # still persist (Drives tab lists them); analysis is computed when you
+        # actually open or click a drive.
         self.status.showMessage("Ready — select a drive folder containing a GPS CSV.")
 
     def _create_ui(self):
@@ -160,14 +184,25 @@ class AutoDNAApplication(QMainWindow):
     
     def _load_drive(self, drive_path: str):
         try:
+            drive_path = _resolve_drive_path(drive_path)   # re-root teammate paths
             self.status.showMessage("Loading drive… (looking up DEM elevation)")
             loader = DriveDataLoader(Path(drive_path))
             #self.drive_data = loader.load_drive()
             self.drive_data = loader.load_drive(
                 progress_cb=lambda msg: self.status.showMessage(msg)
             )
-            #self.dashboard_view.set_drive_data(self.drive_data)
-            
+
+            # per-segment fuel records + potential savings (per vehicle).
+            # runs before the views render so the map/dashboard/stats see results.
+            try:
+                summary = evaluate_drive(self.drive_data)
+                self.stats_view.set_savings(self.drive_data)
+                print(f"[AutoDNA] Records: vehicle={summary['vehicle']}  "
+                      f"savings={summary['total_savings_l']:.3f} L  "
+                      f"({summary['n_worse']}/{summary['n_segments']} worse segments)")
+            except Exception:
+                print(f"[AutoDNA] Segment records skipped:\n{traceback.format_exc()}")
+
             for view in (self.dashboard_view, self.elevation_view):
                 view.set_drive_data(self.drive_data)
                 
@@ -187,6 +222,7 @@ class AutoDNAApplication(QMainWindow):
                 f"{d.drive_duration_sec / 60:.1f} min  |  "
                 f"{events} events  |  "
                 f"+{d.elevation_gain_m:.0f}/-{d.elevation_loss_m:.0f} m  |  "
+                f"potential savings: {d.total_savings_l:.2f} L  |  "
                 f"elevation: {d.elevation_source}"
             )
             self._on_page_changed("Dashboard")
