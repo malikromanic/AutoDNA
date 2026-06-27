@@ -183,15 +183,53 @@ class AutoDNAApplication(QMainWindow):
             )
             self._on_page_changed("Dashboard")
     
-        except Exception:
-            tb = traceback.format_exc()
-            print(tb)
-            (Path(__file__).parent.parent / "autodna_crash.log").write_text(tb)
-            self.status.showMessage("Load error — see autodna_crash.log")
-            QMessageBox.critical(
-                self, "Drive Load Error",
-                f"{tb[-600:]}\n\nFull trace in autodna_crash.log"
+        except FileNotFoundError as exc:
+            self._handle_load_error(
+                str(exc),
+                "No valid drive recording was found.",
+                "The selected folder does not contain a supported drive recording.\n\n"
+                "Please make sure the selected folder contains:\n"
+                "  • a valid GPS/OBD CSV file\n"
+                "  • a supported AutoDNA recording\n\n"
+                "Then try again.",
             )
+        except ValueError as exc:
+            self._handle_load_error(
+                str(exc),
+                "The drive data could not be read.",
+                "The selected file exists but contains invalid or incomplete data.\n\n"
+                "Possible causes:\n"
+                "  • the CSV file is empty or corrupted\n"
+                "  • required columns (latitude, longitude, seconds) are missing\n"
+                "  • the GPS data has no valid coordinates\n\n"
+                "Try selecting a different drive folder.",
+            )
+        except Exception:
+            self._handle_load_error(
+                traceback.format_exc(),
+                "An unexpected error occurred.",
+                "Something went wrong while loading the drive.\n\n"
+                "The error details have been saved to autodna_crash.log.\n"
+                "You can try selecting a different drive folder.",
+            )
+
+    def _handle_load_error(self, detail_text: str, title_line: str, body: str):
+        #shrani traceback za debug, prikazi uporabniku prijazno sporocilo
+        tb = detail_text if '\n' in detail_text else traceback.format_exc()
+        print(tb)
+        log_path = Path(__file__).parent.parent / "autodna_crash.log"
+        log_path.write_text(tb)
+        self.status.showMessage("Load error — see autodna_crash.log")
+
+        dlg = QMessageBox(self)
+        dlg.setIcon(QMessageBox.Icon.Critical)
+        dlg.setWindowTitle("Drive Load Error")
+        dlg.setText(f"<b>{title_line}</b>")
+        dlg.setInformativeText(body)
+        #ce uporabnik zahteva podrobnosti prikazi celoten traceback
+        dlg.setDetailedText(tb)
+        dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        dlg.exec()
 
     def _on_page_changed(self, page_name: str):
         #preklopi aktivni pogled in oznaci ustrezen gumb v stranski vrstici
