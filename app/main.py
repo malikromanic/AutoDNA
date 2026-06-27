@@ -28,12 +28,14 @@ if __name__ == '__main__':
         main()
     except Exception as e:
         #shrani traceback v log datoteko za debug
+        #tukaj sem dodal ADNA-54
         log_path = Path(__file__).resolve().parent.parent / "autodna_crash.log"
         tb = traceback.format_exc()
         with open(log_path, "w") as f:
             f.write(tb)
 
         #poskusi prikazati uporabniku prijazno sporocilo v gui oknu
+        #tukaj sem dodal ADNA-54
         try:
             from PyQt6.QtWidgets import QApplication, QMessageBox
             app = QApplication.instance() or QApplication(sys.argv)
