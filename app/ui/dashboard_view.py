@@ -130,14 +130,14 @@ class DashboardView(QWidget):
         map_frame_layout.addWidget(map_title)
 
         self.map_widget = MapWidget()
-        self.map_widget.setMinimumHeight(380)
+        self.map_widget.setMinimumHeight(480)
         map_frame_layout.addWidget(self.map_widget)
 
-        content_row.addWidget(map_frame, 3)
+        content_row.addWidget(map_frame, 4)
 
         #desna ploscica s statistiko voznje
         self.stats_frame = self._build_stats_panel()
-        content_row.addWidget(self.stats_frame, 2)
+        content_row.addWidget(self.stats_frame, 1)
 
         layout.addLayout(content_row)
         layout.addStretch()
