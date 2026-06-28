@@ -165,7 +165,7 @@ class DashboardView(QWidget):
         content_row.addWidget(map_frame, 4)
 
         #desna ploscica s statistiko voznje
-        self.stats_frame = self._build_stats_panel()
+        self.stats_frame = self._build_summary()
         content_row.addWidget(self.stats_frame, 1)
 
         layout.addLayout(content_row)

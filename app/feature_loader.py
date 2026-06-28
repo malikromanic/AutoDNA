@@ -20,8 +20,8 @@ import numpy as np
 from pathlib import Path
 from dataclasses import dataclass, asdict
 
-from stm32.bin_parser.stm_utils import read_packets_from_file, save_to_npz
-from ai.preprocessing import load_sensor_data, resample_sensors_to_common_grid
+from AutoDNA.stm32.bin_parser.stm_utils import read_packets_from_file, save_to_npz
+from AutoDNA.ai.preprocessing import load_sensor_data, resample_sensors_to_common_grid
 
 STORE_PATH = Path(__file__).resolve().parent.parent / 'data' / 'fuel_features_store.json'
 
