@@ -285,7 +285,7 @@ class StatsView(QWidget):
         sav_layout.setContentsMargins(14, 12, 14, 12)
         sav_layout.setSpacing(6)
 
-        self._savings_title = QLabel("Potential Savings")
+        self._savings_title = QLabel("Potential Savings for your uploaded drive")
         _stf = QFont()
         _stf.setPointSize(14)
         _stf.setBold(True)
@@ -366,7 +366,7 @@ class StatsView(QWidget):
             key=lambda b: b.get("savings_l", 0.0), reverse=True,
         )
 
-        self._savings_title.setText(f"Potential Savings:  {total:.2f} L")
+        self._savings_title.setText(f"Potential savings for your uploaded drive:  {total:.2f} L")
         self._savings_sub.setText(
             f"vs your records &middot; {len(worse)} of {len(breakdown)} segments "
             f"above their record. A record is the lowest fuel rate seen for that "

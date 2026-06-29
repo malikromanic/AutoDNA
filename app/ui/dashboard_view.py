@@ -126,15 +126,14 @@ class DashboardView(QWidget):
         # --- Metric cards row ---
         cards_layout = QHBoxLayout()
         cards_layout.setSpacing(12)
-
-        self.safety_card = MetricCard("Overall Safety Score", "—", "/ 100", "#27ae60")
-        self.distance_card = MetricCard("Distance", "—", "km", "#0066cc")
-        self.duration_card = MetricCard("Duration", "—", "minutes", "#8e44ad")
+        
+        self.savings_card = MetricCard("Potential Savings", "—", "based on previous records", "#16a085")
+        self.distance_card = MetricCard("Distance", "—", "", "#0066cc")
+        self.duration_card = MetricCard("Duration", "—", "", "#8e44ad")
         self.events_card = MetricCard("Detected Events", "—", "turns + hills", "#e67e22")
-        self.savings_card = MetricCard("Potential Savings", "—", "liters vs your records", "#16a085")
 
-        for card in [self.safety_card, self.distance_card, self.duration_card,
-                     self.events_card, self.savings_card]:
+        for card in [self.savings_card, self.distance_card, self.duration_card,
+                     self.events_card]:
             cards_layout.addWidget(card)
 
         layout.addLayout(cards_layout)
@@ -169,9 +168,6 @@ class DashboardView(QWidget):
         content_row.addWidget(self.stats_frame, 1)
 
         layout.addLayout(content_row)
-
-        self.scores_frame = self._build_scores_frame()
-        layout.addWidget(self.scores_frame)
 
         layout.addStretch()
 
@@ -276,40 +272,6 @@ class DashboardView(QWidget):
         layout.addStretch()
         return frame
 
-    def _build_scores_frame(self) -> QFrame:
-        frame = QFrame()
-        frame.setStyleSheet("""
-            QFrame {
-                background-color: #ffffff;
-                border: 1px solid #e0e0e0;
-                border-radius: 8px;
-            }
-        """)
-        layout = QHBoxLayout(frame)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(24)
-
-        title = QLabel("Category Scores:")
-        title.setStyleSheet("font-weight: bold; font-size: 12px; color: #333;")
-        layout.addWidget(title)
-
-        self.cat_labels = {}
-        for cat in ["Acceleration", "Cornering", "Braking", "Steering"]:
-            cat_layout = QVBoxLayout()
-            cat_layout.setSpacing(2)
-            name = QLabel(cat)
-            name.setStyleSheet("font-size: 10px; color: #666; text-align: center;")
-            name.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            score = QLabel("—")
-            score.setStyleSheet("font-size: 16px; font-weight: bold; color: #0066cc;")
-            score.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            cat_layout.addWidget(name)
-            cat_layout.addWidget(score)
-            layout.addLayout(cat_layout)
-            self.cat_labels[cat] = score
-
-        layout.addStretch()
-        return frame
 
     # ── Data update ──────────────────────────────────────────────────────────
     def set_drive_data(self, drive_data):
@@ -317,27 +279,21 @@ class DashboardView(QWidget):
         self._update_metric_cards()
         self.map_widget.set_drive_data(drive_data)
         self._update_insights()
-        self._update_category_scores()
 
     def _update_metric_cards(self):
         d = self.drive_data
-        self.distance_card.set_value(f"{d.drive_distance_km:.1f}")
+        self.distance_card.set_value(f"{d.drive_distance_km:.1f} km")
 
         duration_min = d.drive_duration_sec / 60
-        self.duration_card.set_value(f"{duration_min:.1f}")
+        self.duration_card.set_value(f"{duration_min:.1f} min")
 
         events = self._count_events()
         self.events_card.set_value(str(events))
 
-        event_density = events / max(duration_min, 1)
-        safety = max(55, min(100, int(100 - event_density * 6)))
-        color = "#27ae60" if safety >= 85 else "#e67e22" if safety >= 70 else "#e74c3c"
-        self.safety_card.set_value(str(safety), color)
-
         # potential fuel saved vs the per-vehicle records (lower = more efficient)
         savings = float(getattr(d, "total_savings_l", 0.0))
         s_color = "#27ae60" if savings <= 0.05 else "#e67e22" if savings <= 0.3 else "#e74c3c"
-        self.savings_card.set_value(f"{savings:.2f}", s_color)
+        self.savings_card.set_value(f"{savings:.2f} L", s_color)
 
     def _update_insights(self):
         d = self.drive_data
@@ -377,32 +333,6 @@ class DashboardView(QWidget):
 
         self._source_rows["Turns"].setText("GPS heading")
         self._source_rows["Hills"].setText(d.elevation_source)
-
-    def _update_category_scores(self):
-        d = self.drive_data
-        # Speed-derived longitudinal acceleration (m/s²)
-        ts = d.gps_timestamps
-        v = d.gps_speed / 3.6  # m/s
-        if len(v) >= 2 and np.ptp(ts) > 0:
-            a = np.gradient(v, ts)
-        else:
-            a = np.zeros_like(v)
-        accel = float(a[a > 0].mean()) if np.any(a > 0) else 0.0
-        brake = float(-a[a < 0].mean()) if np.any(a < 0) else 0.0
-        corner = float(np.abs(d.turn_rate).mean())
-
-        scores = {
-            "Acceleration": max(70, min(99, int(99 - accel * 18))),
-            "Cornering":    max(70, min(99, int(99 - corner * 1.2))),
-            "Braking":      max(70, min(99, int(99 - brake * 18))),
-            "Steering":     max(70, min(99, int(99 - corner * 1.0))),
-        }
-        for cat, score in scores.items():
-            color = "#27ae60" if score >= 90 else "#e67e22" if score >= 75 else "#e74c3c"
-            self.cat_labels[cat].setText(str(score))
-            self.cat_labels[cat].setStyleSheet(
-                f"font-size: 16px; font-weight: bold; color: {color};"
-            )
 
     def _count_events(self) -> int:
         d = self.drive_data

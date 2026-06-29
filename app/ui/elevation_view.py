@@ -210,7 +210,7 @@ class ElevationView(QWidget):
         ax1.grid(True, alpha=0.25)
         ax1.tick_params(labelsize=8)
 
-        ax2 = self._prof_figure.add_subplot(212, sharex=ax1)
+        """ax2 = self._prof_figure.add_subplot(212, sharex=ax1)  
         ax2.plot(x, d.grade_pct, color='#e67e22', linewidth=1.2)
         ax2.axhline(HILL_GRADE_THRESHOLD, color='#2e7d32', linestyle='--', linewidth=1, alpha=0.6)
         ax2.axhline(-HILL_GRADE_THRESHOLD, color='#6a1b9a', linestyle='--', linewidth=1, alpha=0.6)
@@ -218,9 +218,10 @@ class ElevationView(QWidget):
         ax2.set_xlabel('Distance (km)', fontsize=9)
         ax2.set_ylabel('Grade (%)', fontsize=9)
         ax2.grid(True, alpha=0.25)
-        ax2.tick_params(labelsize=8)
+        ax2.tick_params(labelsize=8)"""
 
-        self._prof_figure.tight_layout(pad=1.0)
+        #self._prof_figure.tight_layout(pad=1.0)
+        self._prof_figure.subplots_adjust(top=0.85, bottom=0, left=0.10, right=0.95)
         self._prof_canvas.draw()
 
     def _update_distribution_chart(self):
