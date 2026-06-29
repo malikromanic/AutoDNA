@@ -11,17 +11,17 @@
 #============================================================================
 
 import math
-import os
-import tempfile
 import numpy as np
 import folium
 
+from AutoDNA.app.get_path import get_data_dir
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineSettings
 from PyQt6.QtCore import QUrl
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QCheckBox
 )
+
 
 #barve in oznake za zavoje in klance
 _TURN_COLOR = {0: '#9e9e9e', 1: '#1565c0', 2: '#e65100'}
@@ -49,7 +49,7 @@ _MERGE_HILL_WIN = 4    #~4 s
 #zapolnjevanje vrzeli - odseki iste vrste loceni z max toliko nicami se zdruzijo
 _MERGE_GAP_GPS = 5
 
-
+    
 def _route_segments(arr: np.ndarray):
     """Return list of (i0, i1, pred) for consecutive equal-value runs."""
     #razstavi polje na odseke z enako vrednostjo - uporablja se za barvanje poti
@@ -457,7 +457,7 @@ class MapWidget(QWidget):
         self._show_placeholder()
 
     # ── Javne metode ─────────────────────────────────────────────────────────
-
+            
     def set_drive_data(self, drive_data):
         #shrani podatke in takoj izrisi karto
         self.drive_data = drive_data
@@ -709,14 +709,18 @@ class MapWidget(QWidget):
         """
         fmap.get_root().html.add_child(folium.Element(legend))
 
-        #zbrise staro zacasno datoteko in shrani novo - nato jo nalozi v webview
-        if self._tmp_path and os.path.exists(self._tmp_path):
-            try:
-                os.unlink(self._tmp_path)
-            except OSError:
-                pass
-        fd, tmp = tempfile.mkstemp(suffix='.html')
-        os.close(fd)
+        """cache_dir = get_data_dir()
+        tmp = str(cache_dir / 'current_map.html')
         fmap.save(tmp)
         self._tmp_path = tmp
-        self.webview.setUrl(QUrl.fromLocalFile(tmp))
+        self.webview.setUrl(QUrl.fromLocalFile(tmp))"""
+        
+        import io
+        html_content = io.BytesIO()
+        fmap.save(html_content, close_file=False)
+        html_str = html_content.getvalue().decode('utf-8')
+        
+        # load HTML directly — no file system involved
+        self.webview.setHtml(html_str, QUrl("http://localhost/"))
+        
+    

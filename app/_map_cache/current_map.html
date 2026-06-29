@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html>
+<head>
+    
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.js"></script>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/css/bootstrap.min.css"/>
+    <link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.0/css/bootstrap-glyphicons.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.2.0/css/all.min.css"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/python-visualization/folium/folium/templates/leaflet.awesome.rotate.min.css"/>
+    
+            <meta name="viewport" content="width=device-width,
+                initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+            <style>
+                #map_ef08336a9c04a3ad59010d85580e39d9 {
+                    position: relative;
+                    width: 100.0%;
+                    height: 100.0%;
+                    left: 0.0%;
+                    top: 0.0%;
+                }
+                .leaflet-container { font-size: 1rem; }
+            </style>
+
+            <style>html, body {
+                width: 100%;
+                height: 100%;
+                margin: 0;
+                padding: 0;
+            }
+            </style>
+
+            <style>#map {
+                position:absolute;
+                top:0;
+                bottom:0;
+                right:0;
+                left:0;
+                }
+            </style>
+
+            <script>
+                L_NO_TOUCH = false;
+                L_DISABLE_3D = false;
+            </script>
+
+        
+</head>
+<body>
+    
+    
+        <div style="position:fixed;bottom:24px;left:24px;z-index:9999;
+                    background:white;padding:10px 14px;border-radius:6px;
+                    border:1px solid #ccc;font-family:sans-serif;font-size:12px;
+                    box-shadow:0 2px 6px rgba(0,0,0,.2)">
+          <b style="font-size:13px">AutoDNA — Turns</b><br>
+          <span style='display:inline-block;width:26px;height:5px;background:#9e9e9e;vertical-align:middle;border-radius:2px;margin-right:5px'></span>Straight<br><span style='display:inline-block;width:26px;height:5px;background:#1565c0;vertical-align:middle;border-radius:2px;margin-right:5px'></span>Left Turn<br><span style='display:inline-block;width:26px;height:5px;background:#e65100;vertical-align:middle;border-radius:2px;margin-right:5px'></span>Right Turn<br>
+          <hr style="margin:6px 0">
+          <span style="font-size:10px;color:#888">
+            341 GPS pts &bull; GPS-only detection<br>
+            no short-event filter<br>
+            239 / 341 GPS pts with turn prediction<br>
+            click event for details
+          </span>
+        </div>
+        
+    
+            <div class="folium-map" id="map_ef08336a9c04a3ad59010d85580e39d9" ></div>
+        
+</body>
+<script>
+    
+    
+            var map_ef08336a9c04a3ad59010d85580e39d9 = L.map(
+                "map_ef08336a9c04a3ad59010d85580e39d9",
+                {
+                    center: [46.372659497067445, 15.121719264516127],
+                    crs: L.CRS.EPSG3857,
+                    ...{
+  "zoom": 15,
+  "zoomControl": true,
+  "preferCanvas": false,
+}
+
+                }
+            );
+
+            
+
+        
+    
+            var tile_layer_e397a975d8742bb62e1a17db3ca0efe3 = L.tileLayer(
+                "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                {
+  "minZoom": 0,
+  "maxZoom": 19,
+  "maxNativeZoom": 19,
+  "noWrap": false,
+  "attribution": "\u0026copy; \u003ca href=\"https://www.openstreetmap.org/copyright\"\u003eOpenStreetMap\u003c/a\u003e contributors",
+  "subdomains": "abc",
+  "detectRetina": false,
+  "tms": false,
+  "opacity": 1,
+}
+
+            );
+        
+    
+            tile_layer_e397a975d8742bb62e1a17db3ca0efe3.addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            var poly_line_e2cfbe543589b91f99dcba968460e032 = L.polyline(
+                [[46.3707941, 15.1257783], [46.3705913, 15.1256795]],
+                {"bubblingMouseEvents": true, "color": "#9e9e9e", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#9e9e9e", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.45, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            poly_line_e2cfbe543589b91f99dcba968460e032.bindTooltip(
+                `<div>
+                     Straight
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_87120ec31d8242cf2f36d652ac5c4aaf = L.polyline(
+                [[46.3705913, 15.1256795], [46.370582, 15.1256569], [46.3705829, 15.1256583], [46.3705821, 15.1256598], [46.3705726, 15.1256567], [46.3705679, 15.1256422], [46.3705634, 15.1256196], [46.3705519, 15.1255947], [46.3705304, 15.1255606], [46.3705008, 15.1255288], [46.3704601, 15.1254939], [46.3704371, 15.125457], [46.3704345, 15.12541], [46.3704477, 15.1253506], [46.3704818, 15.1252687], [46.370516, 15.1251798], [46.3705484, 15.1250785], [46.3705772, 15.1249584], [46.3706056, 15.1248322], [46.3706262, 15.1246981], [46.3706242, 15.1245759], [46.3706021, 15.1244746], [46.3705801, 15.1243936], [46.3705646, 15.1243368], [46.370558, 15.124297], [46.3705573, 15.124263], [46.3705558, 15.1242439], [46.3705539, 15.1242206], [46.3705399, 15.1241906], [46.3705126, 15.1241532], [46.3704606, 15.1241111], [46.3703987, 15.1240687], [46.3703344, 15.1240143], [46.3702711, 15.1239581], [46.3702177, 15.1238879], [46.3701794, 15.1237939], [46.3701584, 15.1236776], [46.3701447, 15.1235624], [46.3701304, 15.1234453], [46.3701139, 15.1233294], [46.3701044, 15.1232179], [46.3700965, 15.1231308], [46.3700893, 15.1230651], [46.3700898, 15.1230232], [46.370097, 15.1229843], [46.3701185, 15.1229371], [46.3701594, 15.1228984], [46.3702201, 15.1228577], [46.370296, 15.1227977], [46.370375, 15.1227362], [46.3704628, 15.1226803], [46.370546, 15.1226232], [46.3706289, 15.1225678], [46.3707201, 15.1225353], [46.3708062, 15.1225158], [46.3708898, 15.1225012], [46.3709758, 15.1225232], [46.3710655, 15.1225828], [46.3711354, 15.1226518], [46.3712061, 15.1227255], [46.3712861, 15.1227981]],
+                {"bubblingMouseEvents": true, "color": "#e65100", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#e65100", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.92, "smoothFactor": 1.0, "stroke": true, "weight": 6}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+        var popup_e1c6913c84e65f941b3f9f7944085cf0 = L.popup({
+  "maxWidth": 220,
+});
+
+        
+            
+                var html_696b8c242f11ab779c3e9c3d68be3949 = $(`<div id="html_696b8c242f11ab779c3e9c3d68be3949" style="width: 100.0%; height: 100.0%;"><div style='font-family:sans-serif;font-size:12px'><b style='color:#e65100;font-size:14px'>Right Turn</b><br><hr style='margin:4px 0'>GPS pts&nbsp; 1–60 (60 pts)<br>Angle&nbsp; <b>163&deg;</b><br>GPS strength&nbsp; <b>48.9%</b><br>Source&nbsp; GPS turn</div></div>`)[0];
+                popup_e1c6913c84e65f941b3f9f7944085cf0.setContent(html_696b8c242f11ab779c3e9c3d68be3949);
+            
+        
+
+        poly_line_87120ec31d8242cf2f36d652ac5c4aaf.bindPopup(popup_e1c6913c84e65f941b3f9f7944085cf0)
+        ;
+
+        
+    
+    
+            poly_line_87120ec31d8242cf2f36d652ac5c4aaf.bindTooltip(
+                `<div>
+                     Right Turn  (60 GPS pts · 49% GPS strength · 163°)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_1692b9240746abc298bca4361d54d7ee = L.polyline(
+                [[46.3712861, 15.1227981], [46.3713641, 15.1228651]],
+                {"bubblingMouseEvents": true, "color": "#9e9e9e", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#9e9e9e", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.45, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            poly_line_1692b9240746abc298bca4361d54d7ee.bindTooltip(
+                `<div>
+                     Straight
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_5b8410a540f15d151dc8434c548bdb77 = L.polyline(
+                [[46.3713641, 15.1228651], [46.3714488, 15.122923], [46.3715323, 15.1229744], [46.3716139, 15.1230231], [46.3716959, 15.123078], [46.3717735, 15.1231223], [46.3718558, 15.1231561], [46.3719294, 15.1231808], [46.3720088, 15.1231963], [46.3720873, 15.1232042], [46.3721702, 15.1231998], [46.3722533, 15.1231878], [46.3723366, 15.1231766]],
+                {"bubblingMouseEvents": true, "color": "#1565c0", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#1565c0", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.92, "smoothFactor": 1.0, "stroke": true, "weight": 6}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+        var popup_2da98a8e86e03ffe9811135bb6b347d9 = L.popup({
+  "maxWidth": 220,
+});
+
+        
+            
+                var html_56013f5f5bf31026df609bd6fc415d1a = $(`<div id="html_56013f5f5bf31026df609bd6fc415d1a" style="width: 100.0%; height: 100.0%;"><div style='font-family:sans-serif;font-size:12px'><b style='color:#1565c0;font-size:14px'>Left Turn</b><br><hr style='margin:4px 0'>GPS pts&nbsp; 62–73 (12 pts)<br>Angle&nbsp; <b>36&deg;</b><br>GPS strength&nbsp; <b>10.3%</b><br>Source&nbsp; GPS turn</div></div>`)[0];
+                popup_2da98a8e86e03ffe9811135bb6b347d9.setContent(html_56013f5f5bf31026df609bd6fc415d1a);
+            
+        
+
+        poly_line_5b8410a540f15d151dc8434c548bdb77.bindPopup(popup_2da98a8e86e03ffe9811135bb6b347d9)
+        ;
+
+        
+    
+    
+            poly_line_5b8410a540f15d151dc8434c548bdb77.bindTooltip(
+                `<div>
+                     Left Turn  (12 GPS pts · 10% GPS strength · 36°)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_1163a0c7a0e9d94c5c668456538be92f = L.polyline(
+                [[46.3723366, 15.1231766], [46.3724262, 15.1231756], [46.3725169, 15.1231775], [46.3726083, 15.1231698], [46.3726993, 15.1231625], [46.3727919, 15.1231563]],
+                {"bubblingMouseEvents": true, "color": "#9e9e9e", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#9e9e9e", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.45, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            poly_line_1163a0c7a0e9d94c5c668456538be92f.bindTooltip(
+                `<div>
+                     Straight
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_cfba82bd0cdd0158b6fafe984b28af95 = L.polyline(
+                [[46.3727919, 15.1231563], [46.3728833, 15.1231623], [46.3729719, 15.123185], [46.3730467, 15.1232418], [46.3730959, 15.1233387], [46.3731249, 15.1234598], [46.3731634, 15.1235776]],
+                {"bubblingMouseEvents": true, "color": "#e65100", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#e65100", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.92, "smoothFactor": 1.0, "stroke": true, "weight": 6}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+        var popup_04d294b8524ec1a4fb3f61dfefa625ad = L.popup({
+  "maxWidth": 220,
+});
+
+        
+            
+                var html_0bc622e351208cbd9aa9e52f8b01455b = $(`<div id="html_0bc622e351208cbd9aa9e52f8b01455b" style="width: 100.0%; height: 100.0%;"><div style='font-family:sans-serif;font-size:12px'><b style='color:#e65100;font-size:14px'>Right Turn</b><br><hr style='margin:4px 0'>GPS pts&nbsp; 79–84 (6 pts)<br>Angle&nbsp; <b>74&deg;</b><br>GPS strength&nbsp; <b>36.7%</b><br>Source&nbsp; GPS turn</div></div>`)[0];
+                popup_04d294b8524ec1a4fb3f61dfefa625ad.setContent(html_0bc622e351208cbd9aa9e52f8b01455b);
+            
+        
+
+        poly_line_cfba82bd0cdd0158b6fafe984b28af95.bindPopup(popup_04d294b8524ec1a4fb3f61dfefa625ad)
+        ;
+
+        
+    
+    
+            poly_line_cfba82bd0cdd0158b6fafe984b28af95.bindTooltip(
+                `<div>
+                     Right Turn  (6 GPS pts · 37% GPS strength · 74°)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_28520b28bfddc5fa10cab7b72a7ed2d3 = L.polyline(
+                [[46.3731634, 15.1235776], [46.3732153, 15.1236955]],
+                {"bubblingMouseEvents": true, "color": "#9e9e9e", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#9e9e9e", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.45, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            poly_line_28520b28bfddc5fa10cab7b72a7ed2d3.bindTooltip(
+                `<div>
+                     Straight
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_278e308f4ae38dcfbe4c0845dd9f7671 = L.polyline(
+                [[46.3732153, 15.1236955], [46.3732798, 15.1237993], [46.3733608, 15.1238914], [46.3734589, 15.1239496], [46.373569, 15.1239978], [46.3736894, 15.1240389], [46.3738168, 15.1240588], [46.373958, 15.1240419], [46.3741002, 15.1239802], [46.3742285, 15.1238578], [46.3743348, 15.1237051], [46.3744228, 15.1235474], [46.3745043, 15.123404], [46.3745771, 15.1232718], [46.374647, 15.1231849], [46.3747254, 15.1231226], [46.3748114, 15.1230874], [46.3748896, 15.1230642], [46.374948, 15.1230637], [46.3749838, 15.1230778], [46.3750093, 15.1230908], [46.3750319, 15.1231], [46.3750628, 15.1230973], [46.3751128, 15.1230536], [46.3751599, 15.1229652], [46.3751993, 15.1228371], [46.3752405, 15.1226683], [46.3752761, 15.1224625], [46.3753068, 15.122222]],
+                {"bubblingMouseEvents": true, "color": "#1565c0", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#1565c0", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.92, "smoothFactor": 1.0, "stroke": true, "weight": 6}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+        var popup_e184edc56189f920dc5650ce032baace = L.popup({
+  "maxWidth": 220,
+});
+
+        
+            
+                var html_4b51fd053f6dd69d20dfa1d332e5dd7d = $(`<div id="html_4b51fd053f6dd69d20dfa1d332e5dd7d" style="width: 100.0%; height: 100.0%;"><div style='font-family:sans-serif;font-size:12px'><b style='color:#1565c0;font-size:14px'>Left Turn</b><br><hr style='margin:4px 0'>GPS pts&nbsp; 86–113 (28 pts)<br>Angle&nbsp; <b>133&deg;</b><br>GPS strength&nbsp; <b>25.7%</b><br>Source&nbsp; GPS turn</div></div>`)[0];
+                popup_e184edc56189f920dc5650ce032baace.setContent(html_4b51fd053f6dd69d20dfa1d332e5dd7d);
+            
+        
+
+        poly_line_278e308f4ae38dcfbe4c0845dd9f7671.bindPopup(popup_e184edc56189f920dc5650ce032baace)
+        ;
+
+        
+    
+    
+            poly_line_278e308f4ae38dcfbe4c0845dd9f7671.bindTooltip(
+                `<div>
+                     Left Turn  (28 GPS pts · 26% GPS strength · 133°)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_e5b25fe3a9e98b0076df729e09cba8f8 = L.polyline(
+                [[46.3753068, 15.122222], [46.3753321, 15.1219691], [46.3753396, 15.1217164], [46.3753446, 15.1214715], [46.3753362, 15.121226], [46.3753241, 15.120985], [46.3753041, 15.1207449], [46.3752709, 15.1205061], [46.3752273, 15.1202653], [46.3751759, 15.1200285], [46.375121, 15.1197913], [46.3750568, 15.1195564], [46.3749922, 15.1193231], [46.3749222, 15.1190971], [46.3748474, 15.1188725], [46.3747704, 15.1186421], [46.3746961, 15.1184098], [46.3746223, 15.1181834], [46.3745468, 15.117959], [46.374477, 15.1177313], [46.3744105, 15.1175016], [46.3743455, 15.1172665], [46.3742884, 15.1170306], [46.3742385, 15.1167873], [46.3741942, 15.1165335], [46.3741636, 15.1162718], [46.3741454, 15.1160138], [46.3741423, 15.1157517]],
+                {"bubblingMouseEvents": true, "color": "#9e9e9e", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#9e9e9e", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.45, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            poly_line_e5b25fe3a9e98b0076df729e09cba8f8.bindTooltip(
+                `<div>
+                     Straight
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_2e4be136ed32f896c410064ac3bfd502 = L.polyline(
+                [[46.3741423, 15.1157517], [46.3741562, 15.1154842], [46.3742033, 15.1152183], [46.3742584, 15.1149505]],
+                {"bubblingMouseEvents": true, "color": "#e65100", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#e65100", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.92, "smoothFactor": 1.0, "stroke": true, "weight": 6}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+        var popup_8a29d2ceb377a7e0797e7496e74384d7 = L.popup({
+  "maxWidth": 220,
+});
+
+        
+            
+                var html_b4687b27e10b7c17aec43dbc3b4ffa36 = $(`<div id="html_b4687b27e10b7c17aec43dbc3b4ffa36" style="width: 100.0%; height: 100.0%;"><div style='font-family:sans-serif;font-size:12px'><b style='color:#e65100;font-size:14px'>Right Turn</b><br><hr style='margin:4px 0'>GPS pts&nbsp; 141–143 (3 pts)<br>Angle&nbsp; <b>15&deg;</b><br>GPS strength&nbsp; <b>7.5%</b><br>Source&nbsp; GPS turn</div></div>`)[0];
+                popup_8a29d2ceb377a7e0797e7496e74384d7.setContent(html_b4687b27e10b7c17aec43dbc3b4ffa36);
+            
+        
+
+        poly_line_2e4be136ed32f896c410064ac3bfd502.bindPopup(popup_8a29d2ceb377a7e0797e7496e74384d7)
+        ;
+
+        
+    
+    
+            poly_line_2e4be136ed32f896c410064ac3bfd502.bindTooltip(
+                `<div>
+                     Right Turn  (3 GPS pts · 7% GPS strength · 15°)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_b5214f37971a64f1efee0579ec6f7518 = L.polyline(
+                [[46.3742584, 15.1149505], [46.374336, 15.114706], [46.3744258, 15.1144813], [46.3745093, 15.1142978], [46.374584, 15.1141432], [46.3746511, 15.1140181], [46.3747014, 15.113908], [46.3747506, 15.1137936], [46.3748029, 15.1136823]],
+                {"bubblingMouseEvents": true, "color": "#9e9e9e", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#9e9e9e", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.45, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            poly_line_b5214f37971a64f1efee0579ec6f7518.bindTooltip(
+                `<div>
+                     Straight
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_9cd31a6056cb0c3f69029691610ba2bd = L.polyline(
+                [[46.3748029, 15.1136823], [46.3748609, 15.1135844], [46.3749164, 15.1135031], [46.3749966, 15.1134622], [46.3750992, 15.1134381], [46.3751937, 15.1133997], [46.3752709, 15.1133269], [46.3753208, 15.1132008], [46.3753257, 15.1130628], [46.375274, 15.1129273], [46.3751828, 15.1128276], [46.3750851, 15.1127847], [46.374993, 15.1127779], [46.3749127, 15.1128069], [46.374841, 15.1128823], [46.374796, 15.1129887], [46.374784, 15.1131281], [46.3747808, 15.1132446], [46.3747908, 15.113361]],
+                {"bubblingMouseEvents": true, "color": "#1565c0", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#1565c0", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.92, "smoothFactor": 1.0, "stroke": true, "weight": 6}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+        var popup_19a3d4153e7f676017710fb61dc247d8 = L.popup({
+  "maxWidth": 220,
+});
+
+        
+            
+                var html_47d2ff3c5a27fbe41a1d4f7c62372c66 = $(`<div id="html_47d2ff3c5a27fbe41a1d4f7c62372c66" style="width: 100.0%; height: 100.0%;"><div style='font-family:sans-serif;font-size:12px'><b style='color:#1565c0;font-size:14px'>Left Turn</b><br><hr style='margin:4px 0'>GPS pts&nbsp; 152–169 (18 pts)<br>Angle&nbsp; <b>148&deg;</b><br>GPS strength&nbsp; <b>54.9%</b><br>Source&nbsp; GPS turn</div></div>`)[0];
+                popup_19a3d4153e7f676017710fb61dc247d8.setContent(html_47d2ff3c5a27fbe41a1d4f7c62372c66);
+            
+        
+
+        poly_line_9cd31a6056cb0c3f69029691610ba2bd.bindPopup(popup_19a3d4153e7f676017710fb61dc247d8)
+        ;
+
+        
+    
+    
+            poly_line_9cd31a6056cb0c3f69029691610ba2bd.bindTooltip(
+                `<div>
+                     Left Turn  (18 GPS pts · 55% GPS strength · 148°)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_42b3f0dbf84a1e592fa62fcca2a2c349 = L.polyline(
+                [[46.3747908, 15.113361], [46.3747831, 15.1135013]],
+                {"bubblingMouseEvents": true, "color": "#9e9e9e", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#9e9e9e", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.45, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            poly_line_42b3f0dbf84a1e592fa62fcca2a2c349.bindTooltip(
+                `<div>
+                     Straight
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_ed79b565b2f014015ded11014456eb74 = L.polyline(
+                [[46.3747831, 15.1135013], [46.3747613, 15.1136569], [46.3746985, 15.1138275], [46.3746241, 15.1140062]],
+                {"bubblingMouseEvents": true, "color": "#e65100", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#e65100", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.92, "smoothFactor": 1.0, "stroke": true, "weight": 6}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+        var popup_c64988f1f0501c4b74323d16f0c8d02e = L.popup({
+  "maxWidth": 220,
+});
+
+        
+            
+                var html_7d343875c7836e781a480e9492d8c6f4 = $(`<div id="html_7d343875c7836e781a480e9492d8c6f4" style="width: 100.0%; height: 100.0%;"><div style='font-family:sans-serif;font-size:12px'><b style='color:#e65100;font-size:14px'>Right Turn</b><br><hr style='margin:4px 0'>GPS pts&nbsp; 171–173 (3 pts)<br>Angle&nbsp; <b>24&deg;</b><br>GPS strength&nbsp; <b>25.2%</b><br>Source&nbsp; GPS turn</div></div>`)[0];
+                popup_c64988f1f0501c4b74323d16f0c8d02e.setContent(html_7d343875c7836e781a480e9492d8c6f4);
+            
+        
+
+        poly_line_ed79b565b2f014015ded11014456eb74.bindPopup(popup_c64988f1f0501c4b74323d16f0c8d02e)
+        ;
+
+        
+    
+    
+            poly_line_ed79b565b2f014015ded11014456eb74.bindTooltip(
+                `<div>
+                     Right Turn  (3 GPS pts · 25% GPS strength · 24°)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_29853540769719f1fd11b00539af3d63 = L.polyline(
+                [[46.3746241, 15.1140062], [46.3745356, 15.1142092], [46.3744382, 15.1144177], [46.3743447, 15.1146273], [46.3742594, 15.114829], [46.3741869, 15.1150303], [46.3741337, 15.1152337], [46.3740956, 15.1154535], [46.3740734, 15.1156772], [46.3740666, 15.1159116], [46.3740772, 15.1161537], [46.3741042, 15.1163896], [46.3741505, 15.1166262], [46.3742051, 15.1168681], [46.3742591, 15.1171018], [46.3743155, 15.117333], [46.3743772, 15.1175639], [46.3744433, 15.1177975], [46.3745129, 15.1180155], [46.3745831, 15.1182269], [46.3746555, 15.118434], [46.374727, 15.1186416], [46.3747991, 15.1188484], [46.3748659, 15.1190536], [46.3749318, 15.1192579], [46.3749986, 15.119468], [46.3750583, 15.1196799], [46.3751125, 15.1198904], [46.3751562, 15.1201055], [46.37519, 15.1203221], [46.3752198, 15.1205448], [46.3752406, 15.1207638], [46.3752569, 15.1209878], [46.3752672, 15.1212088], [46.3752668, 15.1214267], [46.3752594, 15.1216393], [46.375244, 15.1218433], [46.3752252, 15.1220363], [46.3752056, 15.1222227], [46.375184, 15.1224008], [46.3751609, 15.12256], [46.3751376, 15.1227092], [46.3751167, 15.1228316], [46.3751015, 15.1229381]],
+                {"bubblingMouseEvents": true, "color": "#9e9e9e", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#9e9e9e", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.45, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            poly_line_29853540769719f1fd11b00539af3d63.bindTooltip(
+                `<div>
+                     Straight
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_9c3612afc8486a2b7d1a6d7f967a15a1 = L.polyline(
+                [[46.3751015, 15.1229381], [46.3750724, 15.1230147], [46.3750245, 15.1230514], [46.3749707, 15.123059], [46.3749113, 15.1230595], [46.3748396, 15.1230734], [46.3747622, 15.1231043], [46.3746732, 15.1231487], [46.3745955, 15.1232097], [46.374526, 15.1232872], [46.3744644, 15.123382], [46.3744104, 15.123481], [46.3743528, 15.1235865], [46.3742885, 15.1236991], [46.3742178, 15.1238051], [46.3741421, 15.1238979], [46.3740581, 15.1239703], [46.3739685, 15.1240113], [46.3738692, 15.1240152], [46.3737716, 15.1240156], [46.3736771, 15.1240085], [46.3735882, 15.1239885], [46.3735071, 15.1239607], [46.3734321, 15.1239252], [46.373367, 15.1238675], [46.3733089, 15.1237969], [46.3732522, 15.1237086], [46.3731987, 15.1236006], [46.3731564, 15.1234868], [46.3731139, 15.1233762], [46.3730709, 15.1232707], [46.3730188, 15.1231784], [46.3729525, 15.1231226], [46.3728704, 15.123109], [46.372792, 15.1231131], [46.3727117, 15.1231223], [46.3726252, 15.1231267]],
+                {"bubblingMouseEvents": true, "color": "#e65100", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#e65100", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.92, "smoothFactor": 1.0, "stroke": true, "weight": 6}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+        var popup_0d38dd57867c63ee48022dcb62cedcbf = L.popup({
+  "maxWidth": 220,
+});
+
+        
+            
+                var html_9f5a60848e80dd0fdd3b8f625d82185d = $(`<div id="html_9f5a60848e80dd0fdd3b8f625d82185d" style="width: 100.0%; height: 100.0%;"><div style='font-family:sans-serif;font-size:12px'><b style='color:#e65100;font-size:14px'>Right Turn</b><br><hr style='margin:4px 0'>GPS pts&nbsp; 217–252 (36 pts)<br>Angle&nbsp; <b>74&deg;</b><br>GPS strength&nbsp; <b>30.5%</b><br>Source&nbsp; GPS turn</div></div>`)[0];
+                popup_0d38dd57867c63ee48022dcb62cedcbf.setContent(html_9f5a60848e80dd0fdd3b8f625d82185d);
+            
+        
+
+        poly_line_9c3612afc8486a2b7d1a6d7f967a15a1.bindPopup(popup_0d38dd57867c63ee48022dcb62cedcbf)
+        ;
+
+        
+    
+    
+            poly_line_9c3612afc8486a2b7d1a6d7f967a15a1.bindTooltip(
+                `<div>
+                     Right Turn  (36 GPS pts · 31% GPS strength · 74°)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_d058eafe66a513e5229e18f936524da1 = L.polyline(
+                [[46.3726252, 15.1231267], [46.3725421, 15.1231308], [46.3724558, 15.1231358], [46.3723699, 15.1231423], [46.3722823, 15.1231464], [46.3721932, 15.1231542], [46.3721036, 15.1231583], [46.372015, 15.1231583]],
+                {"bubblingMouseEvents": true, "color": "#9e9e9e", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#9e9e9e", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.45, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            poly_line_d058eafe66a513e5229e18f936524da1.bindTooltip(
+                `<div>
+                     Straight
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_8df884eded5b4424a5360c7874df3d68 = L.polyline(
+                [[46.372015, 15.1231583], [46.3719217, 15.1231509], [46.3718305, 15.123126], [46.3717422, 15.1230896], [46.3716565, 15.1230462], [46.371577, 15.1229902], [46.3714995, 15.1229393], [46.3714216, 15.1228882]],
+                {"bubblingMouseEvents": true, "color": "#e65100", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#e65100", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.92, "smoothFactor": 1.0, "stroke": true, "weight": 6}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+        var popup_75381036cfa08d130037863832434d02 = L.popup({
+  "maxWidth": 220,
+});
+
+        
+            
+                var html_c64bb5f9b591f3f4d80a993cf9994cef = $(`<div id="html_c64bb5f9b591f3f4d80a993cf9994cef" style="width: 100.0%; height: 100.0%;"><div style='font-family:sans-serif;font-size:12px'><b style='color:#e65100;font-size:14px'>Right Turn</b><br><hr style='margin:4px 0'>GPS pts&nbsp; 260–266 (7 pts)<br>Angle&nbsp; <b>24&deg;</b><br>GPS strength&nbsp; <b>12.7%</b><br>Source&nbsp; GPS turn</div></div>`)[0];
+                popup_75381036cfa08d130037863832434d02.setContent(html_c64bb5f9b591f3f4d80a993cf9994cef);
+            
+        
+
+        poly_line_8df884eded5b4424a5360c7874df3d68.bindPopup(popup_75381036cfa08d130037863832434d02)
+        ;
+
+        
+    
+    
+            poly_line_8df884eded5b4424a5360c7874df3d68.bindTooltip(
+                `<div>
+                     Right Turn  (7 GPS pts · 13% GPS strength · 24°)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_5fe5a2b196211c4bcabc2b09ca1f40ea = L.polyline(
+                [[46.3714216, 15.1228882], [46.3713468, 15.1228316], [46.371272, 15.1227672], [46.3711985, 15.1226999], [46.3711253, 15.1226306], [46.371055, 15.1225612]],
+                {"bubblingMouseEvents": true, "color": "#9e9e9e", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#9e9e9e", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.45, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            poly_line_5fe5a2b196211c4bcabc2b09ca1f40ea.bindTooltip(
+                `<div>
+                     Straight
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_23c60cfa376cbb6617cb0a4906097e37 = L.polyline(
+                [[46.371055, 15.1225612], [46.3709791, 15.1225075], [46.3709015, 15.1224695], [46.3708244, 15.1224674], [46.3707459, 15.122492], [46.3706621, 15.1225249], [46.3705772, 15.1225631], [46.3705004, 15.1226118], [46.3704286, 15.1226693], [46.3703601, 15.1227266], [46.3702928, 15.1227805], [46.3702346, 15.1228231], [46.3701895, 15.1228541], [46.3701639, 15.1228747], [46.3701452, 15.1228863], [46.3701338, 15.1228924], [46.3701325, 15.1228929], [46.37013, 15.1228928], [46.3701287, 15.1228931], [46.3701285, 15.1228933], [46.3701265, 15.1228962], [46.3701185, 15.1229065], [46.3701062, 15.1229269], [46.370087, 15.1229745], [46.3700829, 15.1230577], [46.3700847, 15.1231598], [46.3700973, 15.1232646], [46.3701089, 15.1233598], [46.3701191, 15.1234655]],
+                {"bubblingMouseEvents": true, "color": "#1565c0", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#1565c0", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.92, "smoothFactor": 1.0, "stroke": true, "weight": 6}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+        var popup_053d0345bfb612360cde2963bb607b2c = L.popup({
+  "maxWidth": 220,
+});
+
+        
+            
+                var html_af9fcfd12e3bf994889f794adb4670ab = $(`<div id="html_af9fcfd12e3bf994889f794adb4670ab" style="width: 100.0%; height: 100.0%;"><div style='font-family:sans-serif;font-size:12px'><b style='color:#1565c0;font-size:14px'>Left Turn</b><br><hr style='margin:4px 0'>GPS pts&nbsp; 272–299 (28 pts)<br>Angle&nbsp; <b>134&deg;</b><br>GPS strength&nbsp; <b>37.6%</b><br>Source&nbsp; GPS turn</div></div>`)[0];
+                popup_053d0345bfb612360cde2963bb607b2c.setContent(html_af9fcfd12e3bf994889f794adb4670ab);
+            
+        
+
+        poly_line_23c60cfa376cbb6617cb0a4906097e37.bindPopup(popup_053d0345bfb612360cde2963bb607b2c)
+        ;
+
+        
+    
+    
+            poly_line_23c60cfa376cbb6617cb0a4906097e37.bindTooltip(
+                `<div>
+                     Left Turn  (28 GPS pts · 38% GPS strength · 134°)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_aebe89af610c21c0229456f8dab221bd = L.polyline(
+                [[46.3701191, 15.1234655], [46.3701315, 15.1235713], [46.3701429, 15.1236769]],
+                {"bubblingMouseEvents": true, "color": "#9e9e9e", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#9e9e9e", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.45, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            poly_line_aebe89af610c21c0229456f8dab221bd.bindTooltip(
+                `<div>
+                     Straight
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_2567cde1869eb96874493810a05fc1b8 = L.polyline(
+                [[46.3701429, 15.1236769], [46.3701571, 15.1237723], [46.3701797, 15.1238551], [46.3702074, 15.1239323], [46.3702414, 15.1239853], [46.3702931, 15.1240281], [46.3703457, 15.1240608], [46.370392, 15.1240933], [46.3704302, 15.1241234], [46.3704653, 15.1241448], [46.3704919, 15.12416], [46.3705095, 15.1241803], [46.3705268, 15.1242101], [46.3705443, 15.1242658], [46.3705617, 15.1243453], [46.3705728, 15.1244418], [46.3705805, 15.1245507], [46.3705858, 15.1246581], [46.3705827, 15.1247726], [46.3705691, 15.1248741], [46.370551, 15.1249552], [46.3705324, 15.1250304], [46.3705154, 15.1251081], [46.3704949, 15.12519], [46.3704761, 15.1252708]],
+                {"bubblingMouseEvents": true, "color": "#e65100", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#e65100", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.92, "smoothFactor": 1.0, "stroke": true, "weight": 6}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+        var popup_786fc8420d315e70d3954f0d65079bf6 = L.popup({
+  "maxWidth": 220,
+});
+
+        
+            
+                var html_5b2b9c5671958c405a687dac4ee36483 = $(`<div id="html_5b2b9c5671958c405a687dac4ee36483" style="width: 100.0%; height: 100.0%;"><div style='font-family:sans-serif;font-size:12px'><b style='color:#e65100;font-size:14px'>Right Turn</b><br><hr style='margin:4px 0'>GPS pts&nbsp; 302–325 (24 pts)<br>Angle&nbsp; <b>29&deg;</b><br>GPS strength&nbsp; <b>33.6%</b><br>Source&nbsp; GPS turn</div></div>`)[0];
+                popup_786fc8420d315e70d3954f0d65079bf6.setContent(html_5b2b9c5671958c405a687dac4ee36483);
+            
+        
+
+        poly_line_2567cde1869eb96874493810a05fc1b8.bindPopup(popup_786fc8420d315e70d3954f0d65079bf6)
+        ;
+
+        
+    
+    
+            poly_line_2567cde1869eb96874493810a05fc1b8.bindTooltip(
+                `<div>
+                     Right Turn  (24 GPS pts · 34% GPS strength · 29°)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_f6b9a45ab89893fe96691c78f09158ec = L.polyline(
+                [[46.3704761, 15.1252708], [46.3704576, 15.1253356]],
+                {"bubblingMouseEvents": true, "color": "#9e9e9e", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#9e9e9e", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.45, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            poly_line_f6b9a45ab89893fe96691c78f09158ec.bindTooltip(
+                `<div>
+                     Straight
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var poly_line_a000b6525d8eeea7fe990477fdb2856f = L.polyline(
+                [[46.3704576, 15.1253356], [46.3704453, 15.1253803], [46.3704346, 15.1254179], [46.3704294, 15.1254543], [46.3704305, 15.1254926], [46.3704411, 15.1255269], [46.3704595, 15.1255512], [46.3704849, 15.1255666], [46.3705089, 15.1255759], [46.3705326, 15.1255831], [46.3705529, 15.1255697], [46.3705652, 15.125551], [46.3705752, 15.1255334], [46.3705808, 15.1255224]],
+                {"bubblingMouseEvents": true, "color": "#1565c0", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#1565c0", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.92, "smoothFactor": 1.0, "stroke": true, "weight": 6}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+        var popup_1d898499f9de823cc12da127b5d38341 = L.popup({
+  "maxWidth": 220,
+});
+
+        
+            
+                var html_155c602e500bc32c1e2479a1a12dff36 = $(`<div id="html_155c602e500bc32c1e2479a1a12dff36" style="width: 100.0%; height: 100.0%;"><div style='font-family:sans-serif;font-size:12px'><b style='color:#1565c0;font-size:14px'>Left Turn</b><br><hr style='margin:4px 0'>GPS pts&nbsp; 327–340 (14 pts)<br>Angle&nbsp; <b>166&deg;</b><br>GPS strength&nbsp; <b>92.4%</b><br>Source&nbsp; GPS turn</div></div>`)[0];
+                popup_1d898499f9de823cc12da127b5d38341.setContent(html_155c602e500bc32c1e2479a1a12dff36);
+            
+        
+
+        poly_line_a000b6525d8eeea7fe990477fdb2856f.bindPopup(popup_1d898499f9de823cc12da127b5d38341)
+        ;
+
+        
+    
+    
+            poly_line_a000b6525d8eeea7fe990477fdb2856f.bindTooltip(
+                `<div>
+                     Left Turn  (14 GPS pts · 92% GPS strength · 166°)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var circle_marker_7516bc9931b122333079723b492c1dfb = L.circleMarker(
+                [46.3705913, 15.1256795],
+                {"bubblingMouseEvents": true, "color": "white", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#e65100", "fillOpacity": 1.0, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 5, "stroke": true, "weight": 1.5}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            circle_marker_7516bc9931b122333079723b492c1dfb.bindTooltip(
+                `<div>
+                     ▶ Right Turn starts here  (60 GPS pts · 49%)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var circle_marker_a7bb869ca0549a68f5e1d919491c1153 = L.circleMarker(
+                [46.3713641, 15.1228651],
+                {"bubblingMouseEvents": true, "color": "white", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#1565c0", "fillOpacity": 1.0, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 5, "stroke": true, "weight": 1.5}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            circle_marker_a7bb869ca0549a68f5e1d919491c1153.bindTooltip(
+                `<div>
+                     ▶ Left Turn starts here  (12 GPS pts · 10%)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var circle_marker_753c0a6ccf4c4b2e637eeb110ecebbc3 = L.circleMarker(
+                [46.3727919, 15.1231563],
+                {"bubblingMouseEvents": true, "color": "white", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#e65100", "fillOpacity": 1.0, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 5, "stroke": true, "weight": 1.5}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            circle_marker_753c0a6ccf4c4b2e637eeb110ecebbc3.bindTooltip(
+                `<div>
+                     ▶ Right Turn starts here  (6 GPS pts · 37%)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var circle_marker_e2abc829cb068e93918ed17a413479f0 = L.circleMarker(
+                [46.3732153, 15.1236955],
+                {"bubblingMouseEvents": true, "color": "white", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#1565c0", "fillOpacity": 1.0, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 5, "stroke": true, "weight": 1.5}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            circle_marker_e2abc829cb068e93918ed17a413479f0.bindTooltip(
+                `<div>
+                     ▶ Left Turn starts here  (28 GPS pts · 26%)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var circle_marker_1f51340e4663fc21335b444530e47cd5 = L.circleMarker(
+                [46.3741423, 15.1157517],
+                {"bubblingMouseEvents": true, "color": "white", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#e65100", "fillOpacity": 1.0, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 5, "stroke": true, "weight": 1.5}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            circle_marker_1f51340e4663fc21335b444530e47cd5.bindTooltip(
+                `<div>
+                     ▶ Right Turn starts here  (3 GPS pts · 7%)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var circle_marker_9da59bf96e7032d8f5359c61f57167da = L.circleMarker(
+                [46.3748029, 15.1136823],
+                {"bubblingMouseEvents": true, "color": "white", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#1565c0", "fillOpacity": 1.0, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 5, "stroke": true, "weight": 1.5}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            circle_marker_9da59bf96e7032d8f5359c61f57167da.bindTooltip(
+                `<div>
+                     ▶ Left Turn starts here  (18 GPS pts · 55%)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var circle_marker_e9ead205656c151a2dcd6e4a587770ce = L.circleMarker(
+                [46.3747831, 15.1135013],
+                {"bubblingMouseEvents": true, "color": "white", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#e65100", "fillOpacity": 1.0, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 5, "stroke": true, "weight": 1.5}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            circle_marker_e9ead205656c151a2dcd6e4a587770ce.bindTooltip(
+                `<div>
+                     ▶ Right Turn starts here  (3 GPS pts · 25%)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var circle_marker_3b5b2e4999281e2aef1043a863ac8a3d = L.circleMarker(
+                [46.3751015, 15.1229381],
+                {"bubblingMouseEvents": true, "color": "white", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#e65100", "fillOpacity": 1.0, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 5, "stroke": true, "weight": 1.5}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            circle_marker_3b5b2e4999281e2aef1043a863ac8a3d.bindTooltip(
+                `<div>
+                     ▶ Right Turn starts here  (36 GPS pts · 31%)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var circle_marker_e7c89ab69a3d79c870ee8be9c5bc9d6a = L.circleMarker(
+                [46.372015, 15.1231583],
+                {"bubblingMouseEvents": true, "color": "white", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#e65100", "fillOpacity": 1.0, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 5, "stroke": true, "weight": 1.5}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            circle_marker_e7c89ab69a3d79c870ee8be9c5bc9d6a.bindTooltip(
+                `<div>
+                     ▶ Right Turn starts here  (7 GPS pts · 13%)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var circle_marker_2c3a1028a5ea72cef52bb46c0c2b7b6d = L.circleMarker(
+                [46.371055, 15.1225612],
+                {"bubblingMouseEvents": true, "color": "white", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#1565c0", "fillOpacity": 1.0, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 5, "stroke": true, "weight": 1.5}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            circle_marker_2c3a1028a5ea72cef52bb46c0c2b7b6d.bindTooltip(
+                `<div>
+                     ▶ Left Turn starts here  (28 GPS pts · 38%)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var circle_marker_53f73a97d3bf0ba15874c956e22ab641 = L.circleMarker(
+                [46.3701429, 15.1236769],
+                {"bubblingMouseEvents": true, "color": "white", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#e65100", "fillOpacity": 1.0, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 5, "stroke": true, "weight": 1.5}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            circle_marker_53f73a97d3bf0ba15874c956e22ab641.bindTooltip(
+                `<div>
+                     ▶ Right Turn starts here  (24 GPS pts · 34%)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var circle_marker_a668ad57a0916a3f280fca8efdac4e11 = L.circleMarker(
+                [46.3704576, 15.1253356],
+                {"bubblingMouseEvents": true, "color": "white", "dashArray": null, "dashOffset": null, "fill": true, "fillColor": "#1565c0", "fillOpacity": 1.0, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 1.0, "radius": 5, "stroke": true, "weight": 1.5}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            circle_marker_a668ad57a0916a3f280fca8efdac4e11.bindTooltip(
+                `<div>
+                     ▶ Left Turn starts here  (14 GPS pts · 92%)
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+            var marker_597926b8e6ecee193dd552f880826169 = L.marker(
+                [46.3707941, 15.1257783],
+                {
+}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            var icon_80a53cf02322b8c02b76f89e83458156 = L.AwesomeMarkers.icon(
+                {
+  "markerColor": "green",
+  "iconColor": "white",
+  "icon": "play",
+  "prefix": "fa",
+  "extraClasses": "fa-rotate-0",
+}
+            );
+        
+    
+            marker_597926b8e6ecee193dd552f880826169.bindTooltip(
+                `<div>
+                     Start
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+                marker_597926b8e6ecee193dd552f880826169.setIcon(icon_80a53cf02322b8c02b76f89e83458156);
+            
+    
+            var marker_212b120e8174e1642d43e21f744b1ea4 = L.marker(
+                [46.3705808, 15.1255224],
+                {
+}
+            ).addTo(map_ef08336a9c04a3ad59010d85580e39d9);
+        
+    
+            var icon_e823a0f60bcdd0878c720394338187a8 = L.AwesomeMarkers.icon(
+                {
+  "markerColor": "red",
+  "iconColor": "white",
+  "icon": "stop",
+  "prefix": "fa",
+  "extraClasses": "fa-rotate-0",
+}
+            );
+        
+    
+            marker_212b120e8174e1642d43e21f744b1ea4.bindTooltip(
+                `<div>
+                     End
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+                marker_212b120e8174e1642d43e21f744b1ea4.setIcon(icon_e823a0f60bcdd0878c720394338187a8);
+            
+</script>
+</html>

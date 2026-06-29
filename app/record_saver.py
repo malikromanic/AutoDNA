@@ -6,9 +6,9 @@ Created on Fri Jun  5 16:41:07 2026
 """
 
 import json
-from pathlib import Path
+from AutoDNA.app.get_path import get_data_dir
 
-RECORDS_FILE = Path(__file__).resolve().parent.parent / "autodna_records.json"
+RECORDS_FILE = get_data_dir() / "autodna_records.json"
 
 
 def load_records() -> dict:

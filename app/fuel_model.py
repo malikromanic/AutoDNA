@@ -15,11 +15,10 @@ Typical call sequence after a new drive is loaded:
 
 import numpy as np
 import json as _json
-from pathlib import Path
 import datetime as _datetime
 from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
-
+from AutoDNA.app.get_path import get_data_dir
 
 # ── model settings ──────────────────────────────────────────────────────────
 
@@ -448,7 +447,7 @@ def compute_and_plot_learning_curve(records: list[dict]):
     return results
 
 
-STATS_CACHE_PATH = Path(__file__).resolve().parent.parent / 'data' / 'stats_cache.json'
+STATS_CACHE_PATH = get_data_dir() / 'stats_cache.json'
  
 def save_stats_cache(result: dict):
     """

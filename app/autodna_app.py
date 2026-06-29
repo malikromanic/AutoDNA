@@ -245,7 +245,6 @@ class AutoDNAApplication(QMainWindow):
                 f"{self.drive_data.drive_duration_sec / 60:.1f} min"
             )
             self._on_page_changed("Dashboard")
-        #tukaj sem dodal ADNA-54
         except FileNotFoundError as exc:
             self._handle_load_error(
                 str(exc),
@@ -256,7 +255,6 @@ class AutoDNAApplication(QMainWindow):
                 "  • a supported AutoDNA recording\n\n"
                 "Then try again.",
             )
-            #tukaj sem dodal ADNA-54
         except ValueError as exc:
             self._handle_load_error(
                 str(exc),
@@ -268,7 +266,6 @@ class AutoDNAApplication(QMainWindow):
                 "  • the GPS data has no valid coordinates\n\n"
                 "Try selecting a different drive folder.",
             )
-            #tukaj sem dodal ADNA-54
         except Exception:
             self._handle_load_error(
                 traceback.format_exc(),
@@ -277,7 +274,6 @@ class AutoDNAApplication(QMainWindow):
                 "The error details have been saved to autodna_crash.log.\n"
                 "You can try selecting a different drive folder.",
             )
-            #tukaj sem dodal ADNA-54
     def _handle_load_error(self, detail_text: str, title_line: str, body: str):
         #shrani traceback za debug, prikazi uporabniku prijazno sporocilo
         tb = detail_text if '\n' in detail_text else traceback.format_exc()
@@ -295,7 +291,7 @@ class AutoDNAApplication(QMainWindow):
         dlg.setDetailedText(tb)
         dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
         dlg.exec()
-        #tukaj sem dodal ADNA-54
+
     def _on_page_changed(self, page_name: str):
         idx = self._page_index.get(page_name)
         if idx is not None:

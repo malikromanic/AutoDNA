@@ -24,8 +24,9 @@ from pathlib import Path
 import numpy as np
 
 from AutoDNA.app.segments import event_segments
+from AutoDNA.app.get_path import get_data_dir
 
-_STORE_PATH = Path(__file__).resolve().parent.parent / "data" / "segment_records.json"
+_STORE_PATH = get_data_dir() / "segment_records.json"
 
 # A segment is "orange" if at most this fraction worse than the record, else red.
 ORANGE_MAX_RATIO = 0.25

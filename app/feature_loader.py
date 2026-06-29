@@ -22,8 +22,9 @@ from dataclasses import dataclass, asdict
 
 from AutoDNA.stm32.bin_parser.stm_utils import read_packets_from_file, save_to_npz
 from AutoDNA.ai.preprocessing import load_sensor_data, resample_sensors_to_common_grid
+from AutoDNA.app.get_path import get_data_dir
 
-STORE_PATH = Path(__file__).resolve().parent.parent / 'data' / 'fuel_features_store.json'
+STORE_PATH = get_data_dir() / 'fuel_features_store.json'
 
 HARSH_JERK_THRESHOLD = 855.0
 
