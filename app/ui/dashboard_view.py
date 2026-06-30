@@ -190,6 +190,7 @@ class DashboardView(QWidget):
         layout.setSpacing(8)
 
         title = QLabel("Drive Summary")
+        title.setStyleSheet("color: #000000")
         title_font = QFont()
         title_font.setPointSize(13)
         title_font.setBold(True)
