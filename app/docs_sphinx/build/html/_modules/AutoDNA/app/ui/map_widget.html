@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoDNA.app.ui.map_widget &#8212; AutoDNA 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../../../_static/documentation_options.js?v=f2a433a1"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+   
+  <link rel="stylesheet" href="../../../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for AutoDNA.app.ui.map_widget</h1><div class="highlight"><pre>
+<span></span><span class="c1">#============================================================================</span>
+<span class="c1">#map widget - gps prikaz poti pobarvane z gps-only detekcijo</span>
+<span class="c1">#</span>
+<span class="c1">#pristop: sprememba gps smeri zazna zavoj (l/d); klanci (gor/dol) iz naklona</span>
+<span class="c1">#dem profila (data_loader.compute_hills) - naprava-gps visina se ignorira.</span>
+<span class="c1">#zaznani odseki so dostopni na MapWidget.segments za prihodnje regresijsko delo.</span>
+<span class="c1">#</span>
+<span class="c1">#nacini vizualizacije (neodvisni):</span>
+<span class="c1">#  zavoji / klanci / kombinirano - katera gps detekcija se obarva</span>
+<span class="c1">#  filtriraj kratke odseke       - iznici odseke krajse od min_run praga</span>
+<span class="c1">#============================================================================</span>
+<span class="sd">&quot;&quot;&quot;Folium-based route map embedded in a QWebEngineView.</span>
+
+<span class="sd">Renders the GPS track as a colored polyline in one of five modes</span>
+<span class="sd">(Turns, Hills, Combined, Turns-performance, Hills-performance) and</span>
+<span class="sd">rebuilds a detailed per-segment list (:data:`MapWidget.segments`) on</span>
+<span class="sd">every render, intended for future regression work beyond what the live</span>
+<span class="sd">app currently uses it for.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">folium</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">AutoDNA.app.get_path</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_data_dir</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PyQt6.QtWebEngineWidgets</span><span class="w"> </span><span class="kn">import</span> <span class="n">QWebEngineView</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PyQt6.QtWebEngineCore</span><span class="w"> </span><span class="kn">import</span> <span class="n">QWebEngineSettings</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PyQt6.QtCore</span><span class="w"> </span><span class="kn">import</span> <span class="n">QUrl</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PyQt6.QtWidgets</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">QWidget</span><span class="p">,</span> <span class="n">QVBoxLayout</span><span class="p">,</span> <span class="n">QHBoxLayout</span><span class="p">,</span> <span class="n">QPushButton</span><span class="p">,</span> <span class="n">QLabel</span><span class="p">,</span> <span class="n">QCheckBox</span>
+<span class="p">)</span>
+
+
+<span class="c1">#barve in oznake za zavoje in klance</span>
+<span class="n">_TURN_COLOR</span> <span class="o">=</span> <span class="p">{</span><span class="mi">0</span><span class="p">:</span> <span class="s1">&#39;#9e9e9e&#39;</span><span class="p">,</span> <span class="mi">1</span><span class="p">:</span> <span class="s1">&#39;#1565c0&#39;</span><span class="p">,</span> <span class="mi">2</span><span class="p">:</span> <span class="s1">&#39;#e65100&#39;</span><span class="p">}</span>
+<span class="n">_TURN_LABEL</span> <span class="o">=</span> <span class="p">{</span><span class="mi">0</span><span class="p">:</span> <span class="s1">&#39;Straight&#39;</span><span class="p">,</span> <span class="mi">1</span><span class="p">:</span> <span class="s1">&#39;Left Turn&#39;</span><span class="p">,</span> <span class="mi">2</span><span class="p">:</span> <span class="s1">&#39;Right Turn&#39;</span><span class="p">}</span>
+<span class="n">_TURN_WBASE</span> <span class="o">=</span> <span class="mi">3</span>  <span class="c1">#debelina crte za odsek brez zavoja</span>
+<span class="n">_TURN_WEVENT</span> <span class="o">=</span> <span class="mi">6</span>  <span class="c1">#debelina crte za zaznani zavoj</span>
+
+<span class="n">_HILL_COLOR</span> <span class="o">=</span> <span class="p">{</span><span class="mi">0</span><span class="p">:</span> <span class="s1">&#39;#9e9e9e&#39;</span><span class="p">,</span> <span class="mi">1</span><span class="p">:</span> <span class="s1">&#39;#2e7d32&#39;</span><span class="p">,</span> <span class="mi">2</span><span class="p">:</span> <span class="s1">&#39;#6a1b9a&#39;</span><span class="p">}</span>
+<span class="n">_HILL_LABEL</span> <span class="o">=</span> <span class="p">{</span><span class="mi">0</span><span class="p">:</span> <span class="s1">&#39;Flat&#39;</span><span class="p">,</span> <span class="mi">1</span><span class="p">:</span> <span class="s1">&#39;Uphill&#39;</span><span class="p">,</span> <span class="mi">2</span><span class="p">:</span> <span class="s1">&#39;Downhill&#39;</span><span class="p">}</span>
+<span class="n">_HILL_WBASE</span> <span class="o">=</span> <span class="mi">3</span>
+<span class="n">_HILL_WEVENT</span> <span class="o">=</span> <span class="mi">6</span>
+
+<span class="c1">#fuel-record performance: 1=rekord (zelena), 2=blizu rekorda (oranzna), 3=slabse (rdeca)</span>
+<span class="n">_PERF_COLOR</span> <span class="o">=</span> <span class="p">{</span><span class="mi">0</span><span class="p">:</span> <span class="s1">&#39;#9e9e9e&#39;</span><span class="p">,</span> <span class="mi">1</span><span class="p">:</span> <span class="s1">&#39;#27ae60&#39;</span><span class="p">,</span> <span class="mi">2</span><span class="p">:</span> <span class="s1">&#39;#f0a500&#39;</span><span class="p">,</span> <span class="mi">3</span><span class="p">:</span> <span class="s1">&#39;#e74c3c&#39;</span><span class="p">}</span>
+<span class="n">_PERF_LABEL</span> <span class="o">=</span> <span class="p">{</span><span class="mi">0</span><span class="p">:</span> <span class="s1">&#39;—&#39;</span><span class="p">,</span> <span class="mi">1</span><span class="p">:</span> <span class="s1">&#39;Record&#39;</span><span class="p">,</span> <span class="mi">2</span><span class="p">:</span> <span class="s1">&#39;Close to record&#39;</span><span class="p">,</span> <span class="mi">3</span><span class="p">:</span> <span class="s1">&#39;Worse than record&#39;</span><span class="p">}</span>
+<span class="n">_PERF_WBASE</span> <span class="o">=</span> <span class="mi">3</span>
+<span class="n">_PERF_WEVENT</span> <span class="o">=</span> <span class="mi">7</span>
+
+<span class="c1">#minimalne dolzine zaporedja - krajse se steje za sum</span>
+<span class="n">_MIN_TURN_WIN</span>   <span class="o">=</span> <span class="mi">2</span>    <span class="c1">#~2 okni (~2 s)</span>
+<span class="n">_MIN_HILL_WIN</span>   <span class="o">=</span> <span class="mi">2</span>    <span class="c1">#~2 okni = ~2 s</span>
+<span class="n">_MERGE_TURN_WIN</span> <span class="o">=</span> <span class="mi">4</span>    <span class="c1">#~4 okna pri vklopljenem filtriranju kratkih odsekov</span>
+<span class="n">_MERGE_HILL_WIN</span> <span class="o">=</span> <span class="mi">4</span>    <span class="c1">#~4 s</span>
+
+<span class="c1">#zapolnjevanje vrzeli - odseki iste vrste loceni z max toliko nicami se zdruzijo</span>
+<span class="n">_MERGE_GAP_GPS</span> <span class="o">=</span> <span class="mi">5</span>
+
+    
+<span class="k">def</span><span class="w"> </span><span class="nf">_route_segments</span><span class="p">(</span><span class="n">arr</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return list of (i0, i1, pred) for consecutive equal-value runs.&quot;&quot;&quot;</span>
+    <span class="c1">#razstavi polje na odseke z enako vrednostjo - uporablja se za barvanje poti</span>
+    <span class="n">segs</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="n">N</span> <span class="o">=</span> <span class="p">[],</span> <span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">arr</span><span class="p">)</span>
+    <span class="k">while</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">N</span><span class="p">:</span>
+        <span class="n">p</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">arr</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+        <span class="n">j</span> <span class="o">=</span> <span class="n">i</span>
+        <span class="k">while</span> <span class="n">j</span> <span class="o">&lt;</span> <span class="n">N</span> <span class="ow">and</span> <span class="nb">int</span><span class="p">(</span><span class="n">arr</span><span class="p">[</span><span class="n">j</span><span class="p">])</span> <span class="o">==</span> <span class="n">p</span><span class="p">:</span>
+            <span class="n">j</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">segs</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">,</span> <span class="n">p</span><span class="p">))</span>
+        <span class="n">i</span> <span class="o">=</span> <span class="n">j</span>
+    <span class="k">return</span> <span class="n">segs</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_filter_preds</span><span class="p">(</span><span class="n">preds</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">min_run</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">max_run</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Zero out non-zero runs shorter than min_run or longer than max_run (0 = no cap).&quot;&quot;&quot;</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">preds</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">i0</span><span class="p">,</span> <span class="n">i1</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">_route_segments</span><span class="p">(</span><span class="n">preds</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">p</span> <span class="o">!=</span> <span class="mi">0</span> <span class="ow">and</span> <span class="p">((</span><span class="n">i1</span> <span class="o">-</span> <span class="n">i0</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">min_run</span> <span class="ow">or</span> <span class="p">(</span><span class="n">max_run</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="p">(</span><span class="n">i1</span> <span class="o">-</span> <span class="n">i0</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">max_run</span><span class="p">)):</span>
+            <span class="n">out</span><span class="p">[</span><span class="n">i0</span><span class="p">:</span><span class="n">i1</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">return</span> <span class="n">out</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_merge_gaps</span><span class="p">(</span><span class="n">arr</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">max_gap</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Fill zero gaps of &lt;= max_gap points between consecutive same-value non-zero runs.</span>
+
+<span class="sd">    Example: [1,1,0,0,1,1] with max_gap=3 → [1,1,1,1,1,1]</span>
+<span class="sd">             [1,1,0,2,0,1] — different values on each side → gaps are NOT filled</span>
+
+<span class="sd">    Iterates until stable so chained merges are handled:</span>
+<span class="sd">    [1,0,1,0,1] with max_gap=1 → [1,1,1,1,1] in two passes.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">arr</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+        <span class="n">changed</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="n">segs</span> <span class="o">=</span> <span class="n">_route_segments</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">segs</span><span class="p">)</span> <span class="o">-</span> <span class="mi">2</span><span class="p">):</span>
+            <span class="n">_</span><span class="p">,</span> <span class="n">i1_a</span><span class="p">,</span> <span class="n">pred_a</span> <span class="o">=</span> <span class="n">segs</span><span class="p">[</span><span class="n">k</span><span class="p">]</span>
+            <span class="n">i0_z</span><span class="p">,</span> <span class="n">i1_z</span><span class="p">,</span> <span class="n">pred_z</span> <span class="o">=</span> <span class="n">segs</span><span class="p">[</span><span class="n">k</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+            <span class="n">i0_b</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">pred_b</span> <span class="o">=</span> <span class="n">segs</span><span class="p">[</span><span class="n">k</span> <span class="o">+</span> <span class="mi">2</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">pred_z</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">pred_a</span> <span class="o">!=</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">pred_a</span> <span class="o">==</span> <span class="n">pred_b</span> <span class="ow">and</span> <span class="p">(</span><span class="n">i1_z</span> <span class="o">-</span> <span class="n">i0_z</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="n">max_gap</span><span class="p">:</span>
+                <span class="n">out</span><span class="p">[</span><span class="n">i0_z</span><span class="p">:</span><span class="n">i1_z</span><span class="p">]</span> <span class="o">=</span> <span class="n">pred_a</span>
+                <span class="n">changed</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">changed</span><span class="p">:</span>
+            <span class="k">break</span>
+    <span class="k">return</span> <span class="n">out</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_build_segments</span><span class="p">(</span><span class="n">gps_ts</span><span class="p">,</span> <span class="n">gps_lat</span><span class="p">,</span> <span class="n">gps_lon</span><span class="p">,</span> <span class="n">gps_speed</span><span class="p">,</span> <span class="n">gps_heading</span><span class="p">,</span> <span class="n">gps_elevation</span><span class="p">,</span>
+                    <span class="n">turn_at_gps</span><span class="p">,</span> <span class="n">turn_deltas</span><span class="p">,</span>
+                    <span class="n">hill_at_gps</span><span class="p">,</span> <span class="n">hill_deltas</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Extract all detected GPS event segments as a list of dicts.</span>
+<span class="sd">    Stored on MapWidget.segments — ready for regression by teammates.</span>
+
+<span class="sd">    Each segment includes:</span>
+<span class="sd">      - GPS indices, coordinates, timing, speed stats</span>
+<span class="sd">      - Turns: turn_angle_deg, turn_severity (0-1), max_heading_change_deg</span>
+<span class="sd">      - Hills: alt_gain_m (signed), slope_pct, direction</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">_type</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="p">(</span><span class="s1">&#39;turn&#39;</span><span class="p">,</span> <span class="mi">1</span><span class="p">):</span> <span class="s1">&#39;left_turn&#39;</span><span class="p">,</span>  <span class="p">(</span><span class="s1">&#39;turn&#39;</span><span class="p">,</span> <span class="mi">2</span><span class="p">):</span> <span class="s1">&#39;right_turn&#39;</span><span class="p">,</span>
+        <span class="p">(</span><span class="s1">&#39;hill&#39;</span><span class="p">,</span> <span class="mi">1</span><span class="p">):</span> <span class="s1">&#39;uphill&#39;</span><span class="p">,</span>     <span class="p">(</span><span class="s1">&#39;hill&#39;</span><span class="p">,</span> <span class="mi">2</span><span class="p">):</span> <span class="s1">&#39;downhill&#39;</span><span class="p">,</span>
+    <span class="p">}</span>
+    <span class="n">N</span>        <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">gps_lat</span><span class="p">)</span>
+    <span class="n">segments</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">task</span><span class="p">,</span> <span class="n">preds</span><span class="p">,</span> <span class="n">deltas</span> <span class="ow">in</span> <span class="p">((</span><span class="s1">&#39;turn&#39;</span><span class="p">,</span> <span class="n">turn_at_gps</span><span class="p">,</span> <span class="n">turn_deltas</span><span class="p">),</span>
+                                 <span class="p">(</span><span class="s1">&#39;hill&#39;</span><span class="p">,</span> <span class="n">hill_at_gps</span><span class="p">,</span> <span class="n">hill_deltas</span><span class="p">)):</span>
+        <span class="k">for</span> <span class="n">i0</span><span class="p">,</span> <span class="n">i1</span><span class="p">,</span> <span class="n">pred</span> <span class="ow">in</span> <span class="n">_route_segments</span><span class="p">(</span><span class="n">preds</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">pred</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">i1c</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">i1</span><span class="p">,</span> <span class="n">N</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span>
+            <span class="n">n</span>   <span class="o">=</span> <span class="n">i1</span> <span class="o">-</span> <span class="n">i0</span>
+            <span class="n">dur</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">gps_ts</span><span class="p">[</span><span class="n">i1c</span><span class="p">]</span> <span class="o">-</span> <span class="n">gps_ts</span><span class="p">[</span><span class="n">i0</span><span class="p">])</span> <span class="k">if</span> <span class="n">n</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="k">else</span> <span class="mf">0.0</span>
+            <span class="n">spd</span> <span class="o">=</span> <span class="n">gps_speed</span><span class="p">[</span><span class="n">i0</span><span class="p">:</span><span class="n">i1</span><span class="p">]</span>
+
+            <span class="n">seg</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s1">&#39;type&#39;</span><span class="p">:</span>           <span class="n">_type</span><span class="p">[(</span><span class="n">task</span><span class="p">,</span> <span class="n">pred</span><span class="p">)],</span>
+                <span class="s1">&#39;gps_start&#39;</span><span class="p">:</span>      <span class="nb">int</span><span class="p">(</span><span class="n">i0</span><span class="p">),</span>
+                <span class="s1">&#39;gps_end&#39;</span><span class="p">:</span>        <span class="nb">int</span><span class="p">(</span><span class="n">i1c</span><span class="p">),</span>
+                <span class="s1">&#39;n_gps_points&#39;</span><span class="p">:</span>   <span class="nb">int</span><span class="p">(</span><span class="n">n</span><span class="p">),</span>
+                <span class="s1">&#39;duration_s&#39;</span><span class="p">:</span>     <span class="nb">round</span><span class="p">(</span><span class="n">dur</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>
+                <span class="s1">&#39;lat_start&#39;</span><span class="p">:</span>      <span class="nb">float</span><span class="p">(</span><span class="n">gps_lat</span><span class="p">[</span><span class="n">i0</span><span class="p">]),</span>
+                <span class="s1">&#39;lon_start&#39;</span><span class="p">:</span>      <span class="nb">float</span><span class="p">(</span><span class="n">gps_lon</span><span class="p">[</span><span class="n">i0</span><span class="p">]),</span>
+                <span class="s1">&#39;lat_end&#39;</span><span class="p">:</span>        <span class="nb">float</span><span class="p">(</span><span class="n">gps_lat</span><span class="p">[</span><span class="n">i1c</span><span class="p">]),</span>
+                <span class="s1">&#39;lon_end&#39;</span><span class="p">:</span>        <span class="nb">float</span><span class="p">(</span><span class="n">gps_lon</span><span class="p">[</span><span class="n">i1c</span><span class="p">]),</span>
+                <span class="s1">&#39;coords&#39;</span><span class="p">:</span>         <span class="nb">list</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">gps_lat</span><span class="p">[</span><span class="n">i0</span><span class="p">:</span><span class="n">i1</span><span class="p">]</span><span class="o">.</span><span class="n">tolist</span><span class="p">(),</span>
+                                           <span class="n">gps_lon</span><span class="p">[</span><span class="n">i0</span><span class="p">:</span><span class="n">i1</span><span class="p">]</span><span class="o">.</span><span class="n">tolist</span><span class="p">())),</span>
+                <span class="s1">&#39;speed_mean_kmh&#39;</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">spd</span><span class="o">.</span><span class="n">mean</span><span class="p">()),</span> <span class="mi">2</span><span class="p">)</span> <span class="k">if</span> <span class="n">n</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">,</span>
+                <span class="s1">&#39;speed_min_kmh&#39;</span><span class="p">:</span>  <span class="nb">round</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">spd</span><span class="o">.</span><span class="n">min</span><span class="p">()),</span>  <span class="mi">2</span><span class="p">)</span> <span class="k">if</span> <span class="n">n</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">,</span>
+                <span class="s1">&#39;speed_max_kmh&#39;</span><span class="p">:</span>  <span class="nb">round</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">spd</span><span class="o">.</span><span class="n">max</span><span class="p">()),</span>  <span class="mi">2</span><span class="p">)</span> <span class="k">if</span> <span class="n">n</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">,</span>
+            <span class="p">}</span>
+
+            <span class="c1">#razdalja odseka - haversine vsota vzdolz vseh gps tock</span>
+            <span class="n">seg_dist_m</span> <span class="o">=</span> <span class="mf">0.0</span>
+            <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">i0</span><span class="p">,</span> <span class="n">i1c</span><span class="p">):</span>
+                <span class="n">phi1k</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">gps_lat</span><span class="p">[</span><span class="n">k</span><span class="p">]))</span>
+                <span class="n">phi2k</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">gps_lat</span><span class="p">[</span><span class="n">k</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]))</span>
+                <span class="n">dphik</span> <span class="o">=</span> <span class="n">phi2k</span> <span class="o">-</span> <span class="n">phi1k</span>
+                <span class="n">dlamk</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">gps_lon</span><span class="p">[</span><span class="n">k</span> <span class="o">+</span> <span class="mi">1</span><span class="p">])</span> <span class="o">-</span> <span class="nb">float</span><span class="p">(</span><span class="n">gps_lon</span><span class="p">[</span><span class="n">k</span><span class="p">]))</span>
+                <span class="n">ak</span>    <span class="o">=</span> <span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">dphik</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">+</span>
+                         <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">phi1k</span><span class="p">)</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">phi2k</span><span class="p">)</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">dlamk</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+                <span class="n">seg_dist_m</span> <span class="o">+=</span> <span class="mi">6_371_000</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">atan2</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">ak</span><span class="p">),</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">ak</span><span class="p">))</span>
+            <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;segment_distance_m&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="n">seg_dist_m</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">task</span> <span class="o">==</span> <span class="s1">&#39;turn&#39;</span><span class="p">:</span>
+                <span class="n">h_start</span>   <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">gps_heading</span><span class="p">[</span><span class="n">i0</span><span class="p">])</span>
+                <span class="n">h_end</span>     <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">gps_heading</span><span class="p">[</span><span class="n">i1c</span><span class="p">])</span>
+                <span class="n">angle</span>     <span class="o">=</span> <span class="p">(</span><span class="n">h_end</span> <span class="o">-</span> <span class="n">h_start</span> <span class="o">+</span> <span class="mi">180</span><span class="p">)</span> <span class="o">%</span> <span class="mi">360</span> <span class="o">-</span> <span class="mi">180</span>   <span class="c1">#podpisan kot v stopinjah</span>
+                <span class="n">max_delta</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">deltas</span><span class="p">[</span><span class="n">i0</span><span class="p">:</span><span class="n">i1</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">())</span> <span class="k">if</span> <span class="n">n</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span>
+
+                <span class="c1">#kumulativni kot - vsota |dsmerni_kot| po korakih, s-krivulje se ne anulirajo</span>
+                <span class="n">cum_hdg</span> <span class="o">=</span> <span class="mf">0.0</span>
+                <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">i0</span><span class="p">,</span> <span class="n">i1c</span><span class="p">):</span>
+                    <span class="n">dh</span> <span class="o">=</span> <span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">gps_heading</span><span class="p">[</span><span class="n">k</span> <span class="o">+</span> <span class="mi">1</span><span class="p">])</span> <span class="o">-</span> <span class="nb">float</span><span class="p">(</span><span class="n">gps_heading</span><span class="p">[</span><span class="n">k</span><span class="p">])</span> <span class="o">+</span> <span class="mi">180</span><span class="p">)</span> <span class="o">%</span> <span class="mi">360</span> <span class="o">-</span> <span class="mi">180</span>
+                    <span class="n">cum_hdg</span> <span class="o">+=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">dh</span><span class="p">)</span>
+
+                <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;turn_angle_deg&#39;</span><span class="p">]</span>             <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">angle</span><span class="p">),</span> <span class="mi">1</span><span class="p">)</span>
+                <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;turn_direction&#39;</span><span class="p">]</span>             <span class="o">=</span> <span class="s1">&#39;left&#39;</span> <span class="k">if</span> <span class="n">pred</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">else</span> <span class="s1">&#39;right&#39;</span>
+                <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;turn_severity&#39;</span><span class="p">]</span>              <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="nb">min</span><span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">angle</span><span class="p">)</span> <span class="o">/</span> <span class="mf">180.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span> <span class="mi">3</span><span class="p">)</span>
+                <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;max_heading_change_deg&#39;</span><span class="p">]</span>     <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="n">max_delta</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+                <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;cumulative_heading_deg&#39;</span><span class="p">]</span>     <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="n">cum_hdg</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+                <span class="c1">#ostrina na meter - locuje oster zavoj na 20m od blagega na 300m</span>
+                <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;heading_change_rate_deg_per_m&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+                    <span class="nb">round</span><span class="p">(</span><span class="n">cum_hdg</span> <span class="o">/</span> <span class="n">seg_dist_m</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span> <span class="k">if</span> <span class="n">seg_dist_m</span> <span class="o">&gt;</span> <span class="mf">1.0</span> <span class="k">else</span> <span class="mf">0.0</span>
+                <span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">alt_start</span>  <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">gps_elevation</span><span class="p">[</span><span class="n">i0</span><span class="p">])</span>
+                <span class="n">alt_end</span>    <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">gps_elevation</span><span class="p">[</span><span class="n">i1c</span><span class="p">])</span>
+                <span class="n">alt_change</span> <span class="o">=</span> <span class="n">alt_end</span> <span class="o">-</span> <span class="n">alt_start</span>   <span class="c1">#pozitivno = pridobljena visina</span>
+
+                <span class="c1">#najstrmejsa tocka v odseku - bolj diagnosticno od povprecnega naklona</span>
+                <span class="n">max_slope</span> <span class="o">=</span> <span class="mf">0.0</span>
+                <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">i0</span><span class="p">,</span> <span class="n">i1c</span><span class="p">):</span>
+                    <span class="n">phi1k</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">gps_lat</span><span class="p">[</span><span class="n">k</span><span class="p">]))</span>
+                    <span class="n">phi2k</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">gps_lat</span><span class="p">[</span><span class="n">k</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]))</span>
+                    <span class="n">dphik</span> <span class="o">=</span> <span class="n">phi2k</span> <span class="o">-</span> <span class="n">phi1k</span>
+                    <span class="n">dlamk</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">gps_lon</span><span class="p">[</span><span class="n">k</span> <span class="o">+</span> <span class="mi">1</span><span class="p">])</span> <span class="o">-</span> <span class="nb">float</span><span class="p">(</span><span class="n">gps_lon</span><span class="p">[</span><span class="n">k</span><span class="p">]))</span>
+                    <span class="n">ak</span>    <span class="o">=</span> <span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">dphik</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">+</span>
+                             <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">phi1k</span><span class="p">)</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">phi2k</span><span class="p">)</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">dlamk</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+                    <span class="n">dm</span>    <span class="o">=</span> <span class="mi">6_371_000</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">atan2</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">ak</span><span class="p">),</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">ak</span><span class="p">))</span>
+                    <span class="k">if</span> <span class="n">dm</span> <span class="o">&gt;</span> <span class="mf">0.5</span><span class="p">:</span>   <span class="c1">#ignoriraj gps sum pod enim metrom</span>
+                        <span class="n">pt_slope</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">gps_elevation</span><span class="p">[</span><span class="n">k</span> <span class="o">+</span> <span class="mi">1</span><span class="p">])</span> <span class="o">-</span> <span class="nb">float</span><span class="p">(</span><span class="n">gps_elevation</span><span class="p">[</span><span class="n">k</span><span class="p">]))</span> <span class="o">/</span> <span class="n">dm</span> <span class="o">*</span> <span class="mi">100</span>
+                        <span class="k">if</span> <span class="n">pt_slope</span> <span class="o">&gt;</span> <span class="n">max_slope</span><span class="p">:</span>
+                            <span class="n">max_slope</span> <span class="o">=</span> <span class="n">pt_slope</span>
+
+                <span class="n">phi1</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">gps_lat</span><span class="p">[</span><span class="n">i0</span><span class="p">]))</span>
+                <span class="n">phi2</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">gps_lat</span><span class="p">[</span><span class="n">i1c</span><span class="p">]))</span>
+                <span class="n">dphi</span> <span class="o">=</span> <span class="n">phi2</span> <span class="o">-</span> <span class="n">phi1</span>
+                <span class="n">dlam</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">gps_lon</span><span class="p">[</span><span class="n">i1c</span><span class="p">])</span> <span class="o">-</span> <span class="nb">float</span><span class="p">(</span><span class="n">gps_lon</span><span class="p">[</span><span class="n">i0</span><span class="p">]))</span>
+                <span class="n">a</span>         <span class="o">=</span> <span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">dphi</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">+</span>
+                             <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">phi1</span><span class="p">)</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">phi2</span><span class="p">)</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">dlam</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+                <span class="n">dist_m</span>    <span class="o">=</span> <span class="mi">6_371_000</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">atan2</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">a</span><span class="p">),</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">a</span><span class="p">))</span>
+                <span class="n">slope_pct</span> <span class="o">=</span> <span class="p">(</span><span class="n">alt_change</span> <span class="o">/</span> <span class="n">dist_m</span> <span class="o">*</span> <span class="mf">100.0</span><span class="p">)</span> <span class="k">if</span> <span class="n">dist_m</span> <span class="o">&gt;</span> <span class="mf">1.0</span> <span class="k">else</span> <span class="mf">0.0</span>
+                <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;alt_gain_m&#39;</span><span class="p">]</span>    <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="n">alt_change</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+                <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;slope_pct&#39;</span><span class="p">]</span>     <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="n">slope_pct</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+                <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;max_slope_pct&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="n">max_slope</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+                <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;direction&#39;</span><span class="p">]</span>     <span class="o">=</span> <span class="s1">&#39;uphill&#39;</span> <span class="k">if</span> <span class="n">pred</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">else</span> <span class="s1">&#39;downhill&#39;</span>
+
+            <span class="n">segments</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">seg</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">segments</span>
+
+
+
+<span class="c1"># ── Oznake dogodkov ──────────────────────────────────────────────────────────</span>
+
+<span class="c1">#neuporabljeno po migraciji na gps-only detekcijo</span>
+<span class="c1">#prej risalo piko na gps center vsakega xgboost okna</span>
+<span class="c1">#odstranjeno ker detekcija poteka na ravni gps tock; _draw_colored_route</span>
+<span class="c1">#ze postavi circlemarker na zacetek vsakega odseka na ravni gps tock</span>
+<span class="c1">#ohranjeno za morebitno prihodnje regresijsko delo (pike resnosti po oknih)</span>
+<span class="c1">#</span>
+<span class="c1"># def _draw_segment_dots(fmap, lat, lon,</span>
+<span class="c1">#                        turn_preds: np.ndarray, turn_proba: np.ndarray,</span>
+<span class="c1">#                        hill_preds: np.ndarray, hill_proba: np.ndarray,</span>
+<span class="c1">#                        win_center_gps: np.ndarray, mode: str):</span>
+<span class="c1">#     &quot;&quot;&quot;Colored dot at the GPS center of each event window (none=0 skipped).&quot;&quot;&quot;</span>
+<span class="c1">#     N = len(lat)</span>
+<span class="c1">#     turn_color = {1: &#39;#1565c0&#39;, 2: &#39;#e65100&#39;}</span>
+<span class="c1">#     turn_label = {1: &#39;Left Turn&#39;, 2: &#39;Right Turn&#39;}</span>
+<span class="c1">#     hill_color = {1: &#39;#2e7d32&#39;, 2: &#39;#6a1b9a&#39;}</span>
+<span class="c1">#     hill_label = {1: &#39;Uphill&#39;,   2: &#39;Downhill&#39;}</span>
+<span class="c1">#</span>
+<span class="c1">#     for i in range(len(turn_preds)):</span>
+<span class="c1">#         gps_idx = int(min(win_center_gps[i], N - 1))</span>
+<span class="c1">#         loc = [float(lat[gps_idx]), float(lon[gps_idx])]</span>
+<span class="c1">#</span>
+<span class="c1">#         if mode in (&#39;turns&#39;, &#39;combined&#39;):</span>
+<span class="c1">#             tp = int(turn_preds[i])</span>
+<span class="c1">#             if tp != 0:</span>
+<span class="c1">#                 conf = float(turn_proba[i, tp])</span>
+<span class="c1">#                 folium.CircleMarker(</span>
+<span class="c1">#                     location=loc, radius=5,</span>
+<span class="c1">#                     color=&#39;white&#39;, weight=1,</span>
+<span class="c1">#                     fill=True, fillColor=turn_color[tp], fillOpacity=0.95,</span>
+<span class="c1">#                     tooltip=f&quot;{turn_label[tp]}  win#{i}  {conf:.0%}&quot;,</span>
+<span class="c1">#                     popup=folium.Popup(</span>
+<span class="c1">#                         f&quot;&lt;b style=&#39;color:{turn_color[tp]}&#39;&gt;{turn_label[tp]}&lt;/b&gt;&quot;</span>
+<span class="c1">#                         f&quot;&lt;br&gt;win #{i} · {conf:.1%}&quot;, max_width=180),</span>
+<span class="c1">#                 ).add_to(fmap)</span>
+<span class="c1">#</span>
+<span class="c1">#         if mode in (&#39;hills&#39;, &#39;combined&#39;):</span>
+<span class="c1">#             hp = int(hill_preds[i])</span>
+<span class="c1">#             if hp != 0:</span>
+<span class="c1">#                 conf = float(hill_proba[i, hp])</span>
+<span class="c1">#                 folium.CircleMarker(</span>
+<span class="c1">#                     location=loc, radius=5,</span>
+<span class="c1">#                     color=&#39;white&#39;, weight=1,</span>
+<span class="c1">#                     fill=True, fillColor=hill_color[hp], fillOpacity=0.95,</span>
+<span class="c1">#                     tooltip=f&quot;{hill_label[hp]}  win#{i}  {conf:.0%}&quot;,</span>
+<span class="c1">#                     popup=folium.Popup(</span>
+<span class="c1">#                         f&quot;&lt;b style=&#39;color:{hill_color[hp]}&#39;&gt;{hill_color[hp]}&lt;/b&gt;&quot;</span>
+<span class="c1">#                         f&quot;&lt;br&gt;win #{i} · {conf:.1%}&quot;, max_width=180),</span>
+<span class="c1">#                 ).add_to(fmap)</span>
+
+
+<span class="c1"># ── Risanje poti ─────────────────────────────────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_draw_colored_route</span><span class="p">(</span><span class="n">fmap</span><span class="p">,</span> <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span><span class="p">,</span>
+                        <span class="n">pred_at_gps</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+                        <span class="n">conf_at_gps</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+                        <span class="n">color_map</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">label_map</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+                        <span class="n">weight_base</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">weight_event</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                        <span class="n">opacity_base</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">opacity_event</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+                        <span class="n">task_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                        <span class="n">seg_lookup</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                        <span class="n">add_popup</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Draw one colored polyline layer onto ``fmap``, one per detected-class run.</span>
+
+<span class="sd">    Adds a tooltip/popup with segment metrics (pulled from</span>
+<span class="sd">    ``seg_lookup``) and a start-of-segment marker for each non-zero run</span>
+<span class="sd">    when ``add_popup`` is set; used to layer turns over hills in</span>
+<span class="sd">    Combined mode by calling this twice with ``add_popup=False`` for</span>
+<span class="sd">    the background layer.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">N</span>    <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">lat</span><span class="p">)</span>
+    <span class="n">segs</span> <span class="o">=</span> <span class="n">_route_segments</span><span class="p">(</span><span class="n">pred_at_gps</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="p">(</span><span class="n">i0</span><span class="p">,</span> <span class="n">i1</span><span class="p">,</span> <span class="n">pred</span><span class="p">)</span> <span class="ow">in</span> <span class="n">segs</span><span class="p">:</span>
+        <span class="n">start</span>  <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">i0</span><span class="p">)</span>
+        <span class="n">end</span>    <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">i1</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="n">coords</span> <span class="o">=</span> <span class="p">[(</span><span class="nb">float</span><span class="p">(</span><span class="n">lat</span><span class="p">[</span><span class="n">k</span><span class="p">]),</span> <span class="nb">float</span><span class="p">(</span><span class="n">lon</span><span class="p">[</span><span class="n">k</span><span class="p">]))</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">start</span><span class="p">,</span> <span class="n">end</span><span class="p">)]</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">coords</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="n">color</span>   <span class="o">=</span> <span class="n">color_map</span><span class="p">[</span><span class="n">pred</span><span class="p">]</span>
+        <span class="n">weight</span>  <span class="o">=</span> <span class="n">weight_event</span> <span class="k">if</span> <span class="n">pred</span> <span class="o">!=</span> <span class="mi">0</span> <span class="k">else</span> <span class="n">weight_base</span>
+        <span class="n">opacity</span> <span class="o">=</span> <span class="n">opacity_event</span> <span class="k">if</span> <span class="n">pred</span> <span class="o">!=</span> <span class="mi">0</span> <span class="k">else</span> <span class="n">opacity_base</span>
+
+        <span class="n">kw</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span> <span class="n">weight</span><span class="o">=</span><span class="n">weight</span><span class="p">,</span> <span class="n">opacity</span><span class="o">=</span><span class="n">opacity</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">add_popup</span> <span class="ow">and</span> <span class="n">pred</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">n_pts</span> <span class="o">=</span> <span class="n">i1</span> <span class="o">-</span> <span class="n">i0</span>
+            <span class="n">avg_c</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">conf_at_gps</span><span class="p">[</span><span class="n">i0</span><span class="p">:</span><span class="n">i1</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">())</span> <span class="k">if</span> <span class="n">n_pts</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span>
+            <span class="n">i1c</span>   <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">i1</span><span class="p">,</span> <span class="n">N</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span>
+
+            <span class="c1">#poisci ze izracunano metriko za ta odsek (kot zavoja ali naklon klanca)</span>
+            <span class="n">seg</span> <span class="o">=</span> <span class="n">seg_lookup</span><span class="o">.</span><span class="n">get</span><span class="p">((</span><span class="n">i0</span><span class="p">,</span> <span class="n">i1c</span><span class="p">))</span> <span class="k">if</span> <span class="n">seg_lookup</span> <span class="k">else</span> <span class="kc">None</span>
+            <span class="n">metric_html</span>  <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+            <span class="n">metric_short</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+            <span class="k">if</span> <span class="n">seg</span> <span class="ow">and</span> <span class="n">task_name</span> <span class="o">==</span> <span class="s1">&#39;turn&#39;</span><span class="p">:</span>
+                <span class="n">metric_html</span>  <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Angle&amp;nbsp; &lt;b&gt;</span><span class="si">{</span><span class="n">seg</span><span class="p">[</span><span class="s1">&#39;turn_angle_deg&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">&amp;deg;&lt;/b&gt;&lt;br&gt;&quot;</span>
+                <span class="n">metric_short</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot; · </span><span class="si">{</span><span class="n">seg</span><span class="p">[</span><span class="s1">&#39;turn_angle_deg&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">°&quot;</span>
+            <span class="k">elif</span> <span class="n">seg</span> <span class="ow">and</span> <span class="n">task_name</span> <span class="o">==</span> <span class="s1">&#39;hill&#39;</span><span class="p">:</span>
+                <span class="n">metric_html</span>  <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Slope&amp;nbsp; &lt;b&gt;</span><span class="si">{</span><span class="n">seg</span><span class="p">[</span><span class="s1">&#39;slope_pct&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">+.1f</span><span class="si">}</span><span class="s2">%&lt;/b&gt;&lt;br&gt;&quot;</span>
+                <span class="n">metric_short</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot; · </span><span class="si">{</span><span class="n">seg</span><span class="p">[</span><span class="s1">&#39;slope_pct&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">+.1f</span><span class="si">}</span><span class="s2">%&quot;</span>
+
+            <span class="n">kw</span><span class="p">[</span><span class="s1">&#39;tooltip&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">label_map</span><span class="p">[</span><span class="n">pred</span><span class="p">]</span><span class="si">}</span><span class="s2">  &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">n_pts</span><span class="si">}</span><span class="s2"> GPS pts · </span><span class="si">{</span><span class="n">avg_c</span><span class="si">:</span><span class="s2">.0%</span><span class="si">}</span><span class="s2"> GPS strength</span><span class="si">{</span><span class="n">metric_short</span><span class="si">}</span><span class="s2">)&quot;</span>
+            <span class="p">)</span>
+            <span class="n">kw</span><span class="p">[</span><span class="s1">&#39;popup&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">folium</span><span class="o">.</span><span class="n">Popup</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;&lt;div style=&#39;font-family:sans-serif;font-size:12px&#39;&gt;&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;&lt;b style=&#39;color:</span><span class="si">{</span><span class="n">color</span><span class="si">}</span><span class="s2">;font-size:14px&#39;&gt;</span><span class="si">{</span><span class="n">label_map</span><span class="p">[</span><span class="n">pred</span><span class="p">]</span><span class="si">}</span><span class="s2">&lt;/b&gt;&lt;br&gt;&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;&lt;hr style=&#39;margin:4px 0&#39;&gt;&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;GPS pts&amp;nbsp; </span><span class="si">{</span><span class="n">i0</span><span class="si">}</span><span class="s2">–</span><span class="si">{</span><span class="n">i1</span><span class="o">-</span><span class="mi">1</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">n_pts</span><span class="si">}</span><span class="s2"> pts)&lt;br&gt;&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">metric_html</span><span class="si">}</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;GPS strength&amp;nbsp; &lt;b&gt;</span><span class="si">{</span><span class="n">avg_c</span><span class="si">:</span><span class="s2">.1%</span><span class="si">}</span><span class="s2">&lt;/b&gt;&lt;br&gt;&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;Source&amp;nbsp; GPS </span><span class="si">{</span><span class="n">task_name</span><span class="si">}</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;&lt;/div&gt;&quot;</span><span class="p">,</span>
+                <span class="n">max_width</span><span class="o">=</span><span class="mi">220</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">elif</span> <span class="n">add_popup</span><span class="p">:</span>
+            <span class="n">kw</span><span class="p">[</span><span class="s1">&#39;tooltip&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">label_map</span><span class="p">[</span><span class="n">pred</span><span class="p">]</span>
+
+        <span class="n">folium</span><span class="o">.</span><span class="n">PolyLine</span><span class="p">(</span><span class="n">coords</span><span class="p">,</span> <span class="o">**</span><span class="n">kw</span><span class="p">)</span><span class="o">.</span><span class="n">add_to</span><span class="p">(</span><span class="n">fmap</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">add_popup</span><span class="p">:</span>
+        <span class="k">for</span> <span class="p">(</span><span class="n">i0</span><span class="p">,</span> <span class="n">i1</span><span class="p">,</span> <span class="n">pred</span><span class="p">)</span> <span class="ow">in</span> <span class="n">segs</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">pred</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">or</span> <span class="n">i0</span> <span class="o">&gt;=</span> <span class="n">N</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">n_pts</span> <span class="o">=</span> <span class="n">i1</span> <span class="o">-</span> <span class="n">i0</span>
+            <span class="n">avg_c</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">conf_at_gps</span><span class="p">[</span><span class="n">i0</span><span class="p">:</span><span class="n">i1</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">())</span> <span class="k">if</span> <span class="n">n_pts</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span>
+            <span class="n">folium</span><span class="o">.</span><span class="n">CircleMarker</span><span class="p">(</span>
+                <span class="n">location</span><span class="o">=</span><span class="p">[</span><span class="nb">float</span><span class="p">(</span><span class="n">lat</span><span class="p">[</span><span class="n">i0</span><span class="p">]),</span> <span class="nb">float</span><span class="p">(</span><span class="n">lon</span><span class="p">[</span><span class="n">i0</span><span class="p">])],</span>
+                <span class="n">radius</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+                <span class="n">color</span><span class="o">=</span><span class="s1">&#39;white&#39;</span><span class="p">,</span> <span class="n">weight</span><span class="o">=</span><span class="mf">1.5</span><span class="p">,</span>
+                <span class="n">fill</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">fillColor</span><span class="o">=</span><span class="n">color_map</span><span class="p">[</span><span class="n">pred</span><span class="p">],</span> <span class="n">fillOpacity</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+                <span class="n">tooltip</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;▶ </span><span class="si">{</span><span class="n">label_map</span><span class="p">[</span><span class="n">pred</span><span class="p">]</span><span class="si">}</span><span class="s2"> starts here  (</span><span class="si">{</span><span class="n">n_pts</span><span class="si">}</span><span class="s2"> GPS pts · </span><span class="si">{</span><span class="n">avg_c</span><span class="si">:</span><span class="s2">.0%</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">,</span>
+            <span class="p">)</span><span class="o">.</span><span class="n">add_to</span><span class="p">(</span><span class="n">fmap</span><span class="p">)</span>
+
+
+<span class="c1"># ── Glavni gradnik ────────────────────────────────────────────────────────────</span>
+
+<div class="viewcode-block" id="MapWidget">
+<a class="viewcode-back" href="../../../../modules.html#AutoDNA.app.ui.map_widget.MapWidget">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">MapWidget</span><span class="p">(</span><span class="n">QWidget</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Folium map with Turns/Hills/Combined × Per Window/Merged selectors.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="c1">#podatki voznje - nastavljeni z set_drive_data</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">drive_data</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="c1">#pot do zacasne html datoteke folium karte</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_tmp_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="c1">#trenutni nacin prikaza: turns, hills ali combined</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_mode</span>   <span class="o">=</span> <span class="s1">&#39;turns&#39;</span>
+        <span class="c1">#ali filtriramo kratke odseke (manj kot 4 gps tocke)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_merged</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="c1">#neuporabljeno po migraciji na gps-only detekcijo</span>
+        <span class="c1">#se je uporabljalo za prikaz/skrivanje per-okno xgboost pik (_draw_segment_dots)</span>
+        <span class="c1">#ohranjeno kot opomnik da je podpora za per-okno oznacevalce obnovljiva</span>
+        <span class="c1"># self._show_markers = True</span>
+        <span class="c1">#zaznani odseki dogodkov - polnjeni po vsakem izrisu, pripravljeni za regresijo</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">segments</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="n">layout</span> <span class="o">=</span> <span class="n">QVBoxLayout</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+        <span class="n">layout</span><span class="o">.</span><span class="n">setContentsMargins</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="n">layout</span><span class="o">.</span><span class="n">setSpacing</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+        <span class="c1">#prva vrstica: gumbi za preklop med zavoji, klanci in kombiniranim prikazom</span>
+        <span class="n">bar</span> <span class="o">=</span> <span class="n">QHBoxLayout</span><span class="p">()</span>
+        <span class="n">bar</span><span class="o">.</span><span class="n">setContentsMargins</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="n">bar</span><span class="o">.</span><span class="n">setSpacing</span><span class="p">(</span><span class="mi">6</span><span class="p">)</span>
+
+        <span class="n">lbl</span> <span class="o">=</span> <span class="n">QLabel</span><span class="p">(</span><span class="s2">&quot;View:&quot;</span><span class="p">)</span>
+        <span class="n">lbl</span><span class="o">.</span><span class="n">setStyleSheet</span><span class="p">(</span><span class="s2">&quot;font-size: 11px; color: #666; padding: 0;&quot;</span><span class="p">)</span>
+        <span class="n">bar</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="n">lbl</span><span class="p">)</span>
+
+        <span class="c1">#ustvari tri gumbe - vsak ima svojo barvo ko je aktiven</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_mode_btns</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">QPushButton</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">mid</span><span class="p">,</span> <span class="n">mlbl</span><span class="p">,</span> <span class="n">col</span> <span class="ow">in</span> <span class="p">[</span>
+            <span class="p">(</span><span class="s1">&#39;turns&#39;</span><span class="p">,</span>            <span class="s1">&#39;Turns&#39;</span><span class="p">,</span>       <span class="s1">&#39;#1565c0&#39;</span><span class="p">),</span>
+            <span class="p">(</span><span class="s1">&#39;hills&#39;</span><span class="p">,</span>            <span class="s1">&#39;Hills&#39;</span><span class="p">,</span>       <span class="s1">&#39;#2e7d32&#39;</span><span class="p">),</span>
+            <span class="p">(</span><span class="s1">&#39;combined&#39;</span><span class="p">,</span>         <span class="s1">&#39;Combined&#39;</span><span class="p">,</span>    <span class="s1">&#39;#6a1b9a&#39;</span><span class="p">),</span>
+            <span class="p">(</span><span class="s1">&#39;turns-performance&#39;</span><span class="p">,</span> <span class="s1">&#39;Turns ⛽&#39;</span><span class="p">,</span>    <span class="s1">&#39;#16a085&#39;</span><span class="p">),</span>
+            <span class="p">(</span><span class="s1">&#39;hills-performance&#39;</span><span class="p">,</span> <span class="s1">&#39;Hills ⛽&#39;</span><span class="p">,</span>    <span class="s1">&#39;#16a085&#39;</span><span class="p">),</span>
+        <span class="p">]:</span>
+            <span class="n">btn</span> <span class="o">=</span> <span class="n">QPushButton</span><span class="p">(</span><span class="n">mlbl</span><span class="p">)</span>
+            <span class="n">btn</span><span class="o">.</span><span class="n">setCheckable</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+            <span class="n">btn</span><span class="o">.</span><span class="n">setFixedHeight</span><span class="p">(</span><span class="mi">26</span><span class="p">)</span>
+            <span class="n">btn</span><span class="o">.</span><span class="n">setStyleSheet</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">                QPushButton </span><span class="se">{{</span>
+<span class="s2">                    background:white; border:1px solid #ccc; border-radius:4px;</span>
+<span class="s2">                    padding:2px 12px; font-size:11px; color:#333;</span>
+<span class="s2">                </span><span class="se">}}</span>
+<span class="s2">                QPushButton:checked </span><span class="se">{{</span>
+<span class="s2">                    background:</span><span class="si">{</span><span class="n">col</span><span class="si">}</span><span class="s2">; border-color:</span><span class="si">{</span><span class="n">col</span><span class="si">}</span><span class="s2">;</span>
+<span class="s2">                    color:white; font-weight:bold;</span>
+<span class="s2">                </span><span class="se">}}</span>
+<span class="s2">                QPushButton:hover:!checked </span><span class="se">{{</span>
+<span class="s2">                    background:#f5f5f5; border-color:</span><span class="si">{</span><span class="n">col</span><span class="si">}</span><span class="s2">; color:</span><span class="si">{</span><span class="n">col</span><span class="si">}</span><span class="s2">;</span>
+<span class="s2">                </span><span class="se">}}</span>
+<span class="s2">            &quot;&quot;&quot;</span><span class="p">)</span>
+            <span class="n">btn</span><span class="o">.</span><span class="n">clicked</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="k">lambda</span> <span class="n">checked</span><span class="p">,</span> <span class="n">m</span><span class="o">=</span><span class="n">mid</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_set_mode</span><span class="p">(</span><span class="n">m</span><span class="p">))</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_mode_btns</span><span class="p">[</span><span class="n">mid</span><span class="p">]</span> <span class="o">=</span> <span class="n">btn</span>
+            <span class="n">bar</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="n">btn</span><span class="p">)</span>
+
+        <span class="n">bar</span><span class="o">.</span><span class="n">addStretch</span><span class="p">()</span>
+        <span class="c1">#ob zagonu prikazi samo zavoje</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_mode_btns</span><span class="p">[</span><span class="s1">&#39;turns&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">setChecked</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">layout</span><span class="o">.</span><span class="n">addLayout</span><span class="p">(</span><span class="n">bar</span><span class="p">)</span>
+
+        <span class="c1">#druga vrstica: moznosti filtriranja in prikaza oznacevalnikov</span>
+        <span class="n">bar2</span> <span class="o">=</span> <span class="n">QHBoxLayout</span><span class="p">()</span>
+        <span class="n">bar2</span><span class="o">.</span><span class="n">setContentsMargins</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>
+        <span class="n">bar2</span><span class="o">.</span><span class="n">setSpacing</span><span class="p">(</span><span class="mi">6</span><span class="p">)</span>
+
+        <span class="c1">#filtriraj odseke krajse od 4 gps tock - zmanjsa sum napacnih napovedi</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_merge_cb</span> <span class="o">=</span> <span class="n">QCheckBox</span><span class="p">(</span><span class="s2">&quot;Filter short events&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_merge_cb</span><span class="o">.</span><span class="n">setChecked</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_merge_cb</span><span class="o">.</span><span class="n">setStyleSheet</span><span class="p">(</span><span class="s2">&quot;font-size: 11px; color: #555;&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_merge_cb</span><span class="o">.</span><span class="n">stateChanged</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_on_merge_changed</span><span class="p">)</span>
+        <span class="n">bar2</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_merge_cb</span><span class="p">)</span>
+
+        <span class="c1">#neuporabljeno po migraciji na gps-only detekcijo</span>
+        <span class="c1">#ui elementi so vklapljali/izklapljali _draw_segment_dots() per-okno pike</span>
+        <span class="c1">#potrditveno polje ni vplivalo na barvanje poti na ravni gps - to se vedno izrise</span>
+        <span class="c1">#obnovi ko bo podpora za per-okno pike resnosti/regresije znova uvedena</span>
+        <span class="c1">#</span>
+        <span class="c1"># sep = QLabel(&quot; | &quot;)</span>
+        <span class="c1"># sep.setStyleSheet(&quot;color:#ccc; font-size:12px;&quot;)</span>
+        <span class="c1"># bar2.addWidget(sep)</span>
+        <span class="c1">#</span>
+        <span class="c1"># self._markers_cb = QCheckBox(&quot;Show all segments&quot;)</span>
+        <span class="c1"># self._markers_cb.setChecked(True)</span>
+        <span class="c1"># self._markers_cb.setStyleSheet(&quot;font-size: 11px; color: #555;&quot;)</span>
+        <span class="c1"># self._markers_cb.stateChanged.connect(self._on_markers_changed)</span>
+        <span class="c1"># bar2.addWidget(self._markers_cb)</span>
+
+        <span class="n">bar2</span><span class="o">.</span><span class="n">addStretch</span><span class="p">()</span>
+        <span class="n">layout</span><span class="o">.</span><span class="n">addLayout</span><span class="p">(</span><span class="n">bar2</span><span class="p">)</span>
+
+        <span class="c1">#qwebengineview za prikaz folium html karte</span>
+        <span class="c1">#lokalni dostop do oddaljenih virov je potreben za openstreetmap plosce</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">webview</span> <span class="o">=</span> <span class="n">QWebEngineView</span><span class="p">()</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">webview</span><span class="o">.</span><span class="n">settings</span><span class="p">()</span>
+        <span class="n">s</span><span class="o">.</span><span class="n">setAttribute</span><span class="p">(</span><span class="n">QWebEngineSettings</span><span class="o">.</span><span class="n">WebAttribute</span><span class="o">.</span><span class="n">LocalContentCanAccessRemoteUrls</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
+        <span class="n">s</span><span class="o">.</span><span class="n">setAttribute</span><span class="p">(</span><span class="n">QWebEngineSettings</span><span class="o">.</span><span class="n">WebAttribute</span><span class="o">.</span><span class="n">LocalContentCanAccessFileUrls</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
+        <span class="n">layout</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">webview</span><span class="p">)</span>
+
+        <span class="c1">#prikazi nadomestno stran dokler ni nalozena voznja</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_show_placeholder</span><span class="p">()</span>
+
+    <span class="c1"># ── Javne metode ─────────────────────────────────────────────────────────</span>
+            
+<div class="viewcode-block" id="MapWidget.set_drive_data">
+<a class="viewcode-back" href="../../../../modules.html#AutoDNA.app.ui.map_widget.MapWidget.set_drive_data">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_drive_data</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">drive_data</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Store the loaded drive and render the map in the current mode.&quot;&quot;&quot;</span>
+        <span class="c1">#shrani podatke in takoj izrisi karto</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">drive_data</span> <span class="o">=</span> <span class="n">drive_data</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_render_map</span><span class="p">()</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_set_mode</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mode</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="c1">#preklopi nacin prikaza in odznaci vse ostale gumbe</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_mode</span> <span class="o">=</span> <span class="n">mode</span>
+        <span class="k">for</span> <span class="n">m</span><span class="p">,</span> <span class="n">btn</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_mode_btns</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">btn</span><span class="o">.</span><span class="n">setChecked</span><span class="p">(</span><span class="n">m</span> <span class="o">==</span> <span class="n">mode</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">drive_data</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_render_map</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_on_merge_changed</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">state</span><span class="p">):</span>
+        <span class="c1">#vklopi ali izklopi filtriranje kratkih odsekov</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_merged</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="n">state</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">drive_data</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_render_map</span><span class="p">()</span>
+
+    <span class="c1">#neuporabljeno po migraciji na gps-only detekcijo</span>
+    <span class="c1">#upravljavec potrditvenega polja za per-okno xgboost pike</span>
+    <span class="c1">#ohranjeno za morebitno prihodnje regresijsko delo (povezi z _markers_cb ko se pike vrnejo)</span>
+    <span class="c1"># def _on_markers_changed(self, state):</span>
+    <span class="c1">#     self._show_markers = bool(state)</span>
+    <span class="c1">#     if self.drive_data:</span>
+    <span class="c1">#         self._render_map()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_show_placeholder</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1">#prikazi html stran z navodilom ko ni nalozene voznje</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">webview</span><span class="o">.</span><span class="n">setHtml</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">            &lt;html&gt;&lt;body style=&quot;background:#f8f9fa;display:flex;align-items:center;</span>
+<span class="s2">                justify-content:center;height:100vh;margin:0;</span>
+<span class="s2">                font-family:sans-serif;color:#999;&quot;&gt;</span>
+<span class="s2">              &lt;div style=&quot;text-align:center&quot;&gt;</span>
+<span class="s2">                &lt;div style=&quot;font-size:48px&quot;&gt;&amp;#x1f5fa;&lt;/div&gt;</span>
+<span class="s2">                &lt;div style=&quot;font-size:14px;margin-top:8px&quot;&gt;</span>
+<span class="s2">                  Open a drive folder (GPS CSV) to see the route</span>
+<span class="s2">                &lt;/div&gt;</span>
+<span class="s2">              &lt;/div&gt;</span>
+<span class="s2">            &lt;/body&gt;&lt;/html&gt;</span>
+<span class="s2">        &quot;&quot;&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_render_map</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Rebuild the Folium map for the current drive and mode, and load it into the webview.</span>
+
+<span class="sd">        Re-filters the turn/hill predictions for the active short-event</span>
+<span class="sd">        filter setting, rebuilds :data:`self.segments`, draws the</span>
+<span class="sd">        selected mode&#39;s polyline layer(s), and writes the legend before</span>
+<span class="sd">        pushing the resulting HTML into the embedded ``QWebEngineView``</span>
+<span class="sd">        (in memory, without touching disk).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">d</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">drive_data</span>
+        <span class="c1">#preveri da so podatki nalozeni in da ima gps sled vsaj 2 tocki</span>
+        <span class="k">if</span> <span class="n">d</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="nb">len</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">gps_lat</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_show_placeholder</span><span class="p">()</span>
+            <span class="k">return</span>
+
+        <span class="n">lat</span>    <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">gps_lat</span>
+        <span class="n">lon</span>    <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">gps_lon</span>
+        <span class="n">N</span>      <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">lat</span><span class="p">)</span>
+        <span class="n">mode</span>   <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_mode</span>
+        <span class="n">merged</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_merged</span>
+
+        <span class="c1">#neuporabljeno po migraciji na gps-only detekcijo</span>
+        <span class="c1">#m se je uporabljal za pogojitev _draw_segment_dots() in se je prikazoval v legendi</span>
+        <span class="c1"># M = len(d.xgb_turn_preds)</span>
+
+        <span class="n">t_min</span> <span class="o">=</span> <span class="n">_MERGE_TURN_WIN</span> <span class="k">if</span> <span class="n">merged</span> <span class="k">else</span> <span class="n">_MIN_TURN_WIN</span>
+        <span class="n">h_min</span> <span class="o">=</span> <span class="n">_MERGE_HILL_WIN</span> <span class="k">if</span> <span class="n">merged</span> <span class="k">else</span> <span class="n">_MIN_HILL_WIN</span>
+
+        <span class="c1">#zavoji iz gps smeri (data_loader.compute_turns) - histereza da daljse</span>
+        <span class="c1">#zvezne odseke (vstop-vrh-izstop), ne le vrh ovinka. enak vir kot dashboard.</span>
+        <span class="n">turn_at_gps</span>      <span class="o">=</span> <span class="n">_filter_preds</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">turn_preds</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span> <span class="n">t_min</span><span class="p">)</span>
+        <span class="n">turn_at_gps</span>      <span class="o">=</span> <span class="n">_merge_gaps</span><span class="p">(</span><span class="n">turn_at_gps</span><span class="p">,</span> <span class="n">_MERGE_GAP_GPS</span><span class="p">)</span>
+        <span class="n">turn_conf_at_gps</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">turn_conf</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="c1">#magnituda spremembe smeri (deg) za metrike odsekov v _build_segments</span>
+        <span class="n">turn_deltas</span>      <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">turn_rate</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+        <span class="c1">#klanci iz dem (digitalni model visin) - nas gps dem vir, izracunan v data_loader</span>
+        <span class="c1">#naklon ceste iz dem profila; naprava-gps visina se ignorira (nenatancna)</span>
+        <span class="n">hill_at_gps</span>      <span class="o">=</span> <span class="n">_filter_preds</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">hill_preds</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span> <span class="n">h_min</span><span class="p">)</span>
+        <span class="n">hill_at_gps</span>      <span class="o">=</span> <span class="n">_merge_gaps</span><span class="p">(</span><span class="n">hill_at_gps</span><span class="p">,</span> <span class="n">_MERGE_GAP_GPS</span><span class="p">)</span>
+        <span class="n">hill_conf_at_gps</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">hill_conf</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="c1">#podpisan naklon (%) - placeholder za podpis _build_segments (klanci ga ne rabijo)</span>
+        <span class="n">hill_deltas</span>      <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">grade_pct</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        
+        
+        
+        <span class="bp">self</span><span class="o">.</span><span class="n">segments</span> <span class="o">=</span> <span class="n">_build_segments</span><span class="p">(</span>
+            <span class="n">d</span><span class="o">.</span><span class="n">gps_timestamps</span><span class="p">,</span> <span class="n">d</span><span class="o">.</span><span class="n">gps_lat</span><span class="p">,</span> <span class="n">d</span><span class="o">.</span><span class="n">gps_lon</span><span class="p">,</span> <span class="n">d</span><span class="o">.</span><span class="n">gps_speed</span><span class="p">,</span>
+            <span class="n">d</span><span class="o">.</span><span class="n">gps_heading</span><span class="p">,</span> <span class="n">d</span><span class="o">.</span><span class="n">elevation_sm</span><span class="p">,</span>
+            <span class="n">turn_at_gps</span><span class="p">,</span> <span class="n">turn_deltas</span><span class="p">,</span>
+            <span class="n">hill_at_gps</span><span class="p">,</span> <span class="n">hill_deltas</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="c1">#hitra preslikava (gps_start, gps_end) -&gt; segment, za uporabo v popup/tooltip</span>
+        <span class="n">_seg_lookup</span> <span class="o">=</span> <span class="p">{(</span><span class="n">s</span><span class="p">[</span><span class="s1">&#39;gps_start&#39;</span><span class="p">],</span> <span class="n">s</span><span class="p">[</span><span class="s1">&#39;gps_end&#39;</span><span class="p">]):</span> <span class="n">s</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">segments</span><span class="p">}</span>
+        
+        
+        <span class="c1">#ustvari folium karto - sredinisce je povprecje gps koordinat</span>
+        <span class="n">fmap</span> <span class="o">=</span> <span class="n">folium</span><span class="o">.</span><span class="n">Map</span><span class="p">(</span>
+            <span class="n">location</span><span class="o">=</span><span class="p">[</span><span class="nb">float</span><span class="p">(</span><span class="n">lat</span><span class="o">.</span><span class="n">mean</span><span class="p">()),</span> <span class="nb">float</span><span class="p">(</span><span class="n">lon</span><span class="o">.</span><span class="n">mean</span><span class="p">())],</span>
+            <span class="n">zoom_start</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span>
+            <span class="n">tiles</span><span class="o">=</span><span class="s1">&#39;OpenStreetMap&#39;</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="c1">#fuel-record performance per gps tocka (nastavi segment_records.evaluate_drive)</span>
+        <span class="n">turn_perf</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="s1">&#39;turn_perf&#39;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="n">hill_perf</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="s1">&#39;hill_perf&#39;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="n">turn_perf</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span> <span class="k">if</span> <span class="n">turn_perf</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">turn_perf</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="n">hill_perf</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span> <span class="k">if</span> <span class="n">hill_perf</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">hill_perf</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="n">perf_conf</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+        <span class="c1">#narisi pobarvano pot glede na izbrani nacin prikaza</span>
+        <span class="k">if</span> <span class="n">mode</span> <span class="o">==</span> <span class="s1">&#39;turns&#39;</span><span class="p">:</span>
+            <span class="n">_draw_colored_route</span><span class="p">(</span>
+                <span class="n">fmap</span><span class="p">,</span> <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span><span class="p">,</span>
+                <span class="n">turn_at_gps</span><span class="p">,</span> <span class="n">turn_conf_at_gps</span><span class="p">,</span>
+                <span class="n">_TURN_COLOR</span><span class="p">,</span> <span class="n">_TURN_LABEL</span><span class="p">,</span>
+                <span class="n">_TURN_WBASE</span><span class="p">,</span> <span class="n">_TURN_WEVENT</span><span class="p">,</span>
+                <span class="n">opacity_base</span><span class="o">=</span><span class="mf">0.45</span><span class="p">,</span> <span class="n">opacity_event</span><span class="o">=</span><span class="mf">0.92</span><span class="p">,</span>
+                <span class="n">task_name</span><span class="o">=</span><span class="s1">&#39;turn&#39;</span><span class="p">,</span>
+                <span class="n">seg_lookup</span><span class="o">=</span><span class="n">_seg_lookup</span><span class="p">,</span>
+            <span class="p">)</span>
+        
+        <span class="k">elif</span> <span class="n">mode</span> <span class="o">==</span> <span class="s1">&#39;hills&#39;</span><span class="p">:</span>
+            <span class="n">_draw_colored_route</span><span class="p">(</span>
+                <span class="n">fmap</span><span class="p">,</span> <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span><span class="p">,</span>
+                <span class="n">hill_at_gps</span><span class="p">,</span> <span class="n">hill_conf_at_gps</span><span class="p">,</span>
+                <span class="n">_HILL_COLOR</span><span class="p">,</span> <span class="n">_HILL_LABEL</span><span class="p">,</span>
+                <span class="n">_HILL_WBASE</span><span class="p">,</span> <span class="n">_HILL_WEVENT</span><span class="p">,</span>
+                <span class="n">opacity_base</span><span class="o">=</span><span class="mf">0.45</span><span class="p">,</span> <span class="n">opacity_event</span><span class="o">=</span><span class="mf">0.92</span><span class="p">,</span>
+                <span class="n">task_name</span><span class="o">=</span><span class="s1">&#39;hill&#39;</span><span class="p">,</span>
+                <span class="n">seg_lookup</span><span class="o">=</span><span class="n">_seg_lookup</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="k">elif</span> <span class="n">mode</span> <span class="o">==</span> <span class="s1">&#39;turns-performance&#39;</span><span class="p">:</span>
+            <span class="n">_draw_colored_route</span><span class="p">(</span>
+                <span class="n">fmap</span><span class="p">,</span> <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span><span class="p">,</span>
+                <span class="n">turn_perf</span><span class="p">,</span> <span class="n">perf_conf</span><span class="p">,</span>
+                <span class="n">_PERF_COLOR</span><span class="p">,</span> <span class="n">_PERF_LABEL</span><span class="p">,</span>
+                <span class="n">_PERF_WBASE</span><span class="p">,</span> <span class="n">_PERF_WEVENT</span><span class="p">,</span>
+                <span class="n">opacity_base</span><span class="o">=</span><span class="mf">0.40</span><span class="p">,</span> <span class="n">opacity_event</span><span class="o">=</span><span class="mf">0.95</span><span class="p">,</span>
+                <span class="n">task_name</span><span class="o">=</span><span class="s1">&#39;perf&#39;</span><span class="p">,</span>
+                <span class="n">seg_lookup</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="k">elif</span> <span class="n">mode</span> <span class="o">==</span> <span class="s1">&#39;hills-performance&#39;</span><span class="p">:</span>
+            <span class="n">_draw_colored_route</span><span class="p">(</span>
+                <span class="n">fmap</span><span class="p">,</span> <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span><span class="p">,</span>
+                <span class="n">hill_perf</span><span class="p">,</span> <span class="n">perf_conf</span><span class="p">,</span>
+                <span class="n">_PERF_COLOR</span><span class="p">,</span> <span class="n">_PERF_LABEL</span><span class="p">,</span>
+                <span class="n">_PERF_WBASE</span><span class="p">,</span> <span class="n">_PERF_WEVENT</span><span class="p">,</span>
+                <span class="n">opacity_base</span><span class="o">=</span><span class="mf">0.40</span><span class="p">,</span> <span class="n">opacity_event</span><span class="o">=</span><span class="mf">0.95</span><span class="p">,</span>
+                <span class="n">task_name</span><span class="o">=</span><span class="s1">&#39;perf&#39;</span><span class="p">,</span>
+                <span class="n">seg_lookup</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">_draw_colored_route</span><span class="p">(</span>
+                <span class="n">fmap</span><span class="p">,</span> <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span><span class="p">,</span>
+                <span class="n">hill_at_gps</span><span class="p">,</span> <span class="n">hill_conf_at_gps</span><span class="p">,</span>
+                <span class="n">_HILL_COLOR</span><span class="p">,</span> <span class="n">_HILL_LABEL</span><span class="p">,</span>
+                <span class="n">weight_base</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">weight_event</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+                <span class="n">opacity_base</span><span class="o">=</span><span class="mf">0.25</span><span class="p">,</span> <span class="n">opacity_event</span><span class="o">=</span><span class="mf">0.40</span><span class="p">,</span>
+                <span class="n">task_name</span><span class="o">=</span><span class="s1">&#39;hill&#39;</span><span class="p">,</span>
+                <span class="n">seg_lookup</span><span class="o">=</span><span class="n">_seg_lookup</span><span class="p">,</span>
+                <span class="n">add_popup</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">_draw_colored_route</span><span class="p">(</span>
+                <span class="n">fmap</span><span class="p">,</span> <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span><span class="p">,</span>
+                <span class="n">turn_at_gps</span><span class="p">,</span> <span class="n">turn_conf_at_gps</span><span class="p">,</span>
+                <span class="n">_TURN_COLOR</span><span class="p">,</span> <span class="n">_TURN_LABEL</span><span class="p">,</span>
+                <span class="n">weight_base</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">weight_event</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+                <span class="n">opacity_base</span><span class="o">=</span><span class="mf">0.45</span><span class="p">,</span> <span class="n">opacity_event</span><span class="o">=</span><span class="mf">0.92</span><span class="p">,</span>
+                <span class="n">task_name</span><span class="o">=</span><span class="s1">&#39;turn&#39;</span><span class="p">,</span>
+                <span class="n">seg_lookup</span><span class="o">=</span><span class="n">_seg_lookup</span><span class="p">,</span>
+                <span class="n">add_popup</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="c1">#oznaki zacetka in konca poti</span>
+        <span class="n">folium</span><span class="o">.</span><span class="n">Marker</span><span class="p">(</span>
+            <span class="p">[</span><span class="nb">float</span><span class="p">(</span><span class="n">lat</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span>  <span class="nb">float</span><span class="p">(</span><span class="n">lon</span><span class="p">[</span><span class="mi">0</span><span class="p">])],</span>
+            <span class="n">tooltip</span><span class="o">=</span><span class="s1">&#39;Start&#39;</span><span class="p">,</span>
+            <span class="n">icon</span><span class="o">=</span><span class="n">folium</span><span class="o">.</span><span class="n">Icon</span><span class="p">(</span><span class="n">color</span><span class="o">=</span><span class="s1">&#39;green&#39;</span><span class="p">,</span> <span class="n">icon</span><span class="o">=</span><span class="s1">&#39;play&#39;</span><span class="p">,</span>  <span class="n">prefix</span><span class="o">=</span><span class="s1">&#39;fa&#39;</span><span class="p">),</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">add_to</span><span class="p">(</span><span class="n">fmap</span><span class="p">)</span>
+        <span class="n">folium</span><span class="o">.</span><span class="n">Marker</span><span class="p">(</span>
+            <span class="p">[</span><span class="nb">float</span><span class="p">(</span><span class="n">lat</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]),</span> <span class="nb">float</span><span class="p">(</span><span class="n">lon</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])],</span>
+            <span class="n">tooltip</span><span class="o">=</span><span class="s1">&#39;End&#39;</span><span class="p">,</span>
+            <span class="n">icon</span><span class="o">=</span><span class="n">folium</span><span class="o">.</span><span class="n">Icon</span><span class="p">(</span><span class="n">color</span><span class="o">=</span><span class="s1">&#39;red&#39;</span><span class="p">,</span>   <span class="n">icon</span><span class="o">=</span><span class="s1">&#39;stop&#39;</span><span class="p">,</span>  <span class="n">prefix</span><span class="o">=</span><span class="s1">&#39;fa&#39;</span><span class="p">),</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">add_to</span><span class="p">(</span><span class="n">fmap</span><span class="p">)</span>
+
+        <span class="c1">#pomocna funkcija za barvni vzorec v legendi</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">_swatch</span><span class="p">(</span><span class="n">color</span><span class="p">):</span>
+            <span class="k">return</span> <span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;&lt;span style=&#39;display:inline-block;width:26px;height:5px;&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;background:</span><span class="si">{</span><span class="n">color</span><span class="si">}</span><span class="s2">;vertical-align:middle;&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;border-radius:2px;margin-right:5px&#39;&gt;&lt;/span&gt;&quot;</span>
+            <span class="p">)</span>
+
+        <span class="c1">#statistika za prikaz v legendi</span>
+        <span class="n">n_turns</span> <span class="o">=</span> <span class="nb">int</span><span class="p">((</span><span class="n">turn_at_gps</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span>
+        <span class="n">n_hills</span> <span class="o">=</span> <span class="nb">int</span><span class="p">((</span><span class="n">hill_at_gps</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span>
+
+        <span class="c1">#sestavi vsebino legende glede na nacin prikaza</span>
+        <span class="k">if</span> <span class="n">mode</span> <span class="o">==</span> <span class="s1">&#39;turns&#39;</span><span class="p">:</span>
+            <span class="n">rows</span>  <span class="o">=</span> <span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">_swatch</span><span class="p">(</span><span class="s1">&#39;#9e9e9e&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">Straight&lt;br&gt;&quot;</span>
+                     <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">_swatch</span><span class="p">(</span><span class="s1">&#39;#1565c0&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">Left Turn&lt;br&gt;&quot;</span>
+                     <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">_swatch</span><span class="p">(</span><span class="s1">&#39;#e65100&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">Right Turn&quot;</span><span class="p">)</span>
+            <span class="n">title</span> <span class="o">=</span> <span class="s2">&quot;AutoDNA — Turns&quot;</span>
+            <span class="n">stat</span>  <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">n_turns</span><span class="si">}</span><span class="s2"> / </span><span class="si">{</span><span class="n">N</span><span class="si">}</span><span class="s2"> GPS pts with turn prediction&quot;</span>
+        <span class="k">elif</span> <span class="n">mode</span> <span class="o">==</span> <span class="s1">&#39;hills&#39;</span><span class="p">:</span>
+            <span class="n">rows</span>  <span class="o">=</span> <span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">_swatch</span><span class="p">(</span><span class="s1">&#39;#9e9e9e&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">Flat&lt;br&gt;&quot;</span>
+                     <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">_swatch</span><span class="p">(</span><span class="s1">&#39;#2e7d32&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">Uphill&lt;br&gt;&quot;</span>
+                     <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">_swatch</span><span class="p">(</span><span class="s1">&#39;#6a1b9a&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">Downhill&quot;</span><span class="p">)</span>
+            <span class="n">title</span> <span class="o">=</span> <span class="s2">&quot;AutoDNA — Hills&quot;</span>
+            <span class="n">stat</span>  <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">n_hills</span><span class="si">}</span><span class="s2"> / </span><span class="si">{</span><span class="n">N</span><span class="si">}</span><span class="s2"> GPS pts with hill prediction&quot;</span>
+        <span class="k">elif</span> <span class="n">mode</span> <span class="ow">in</span> <span class="p">(</span><span class="s1">&#39;turns-performance&#39;</span><span class="p">,</span> <span class="s1">&#39;hills-performance&#39;</span><span class="p">):</span>
+            <span class="n">rows</span>  <span class="o">=</span> <span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">_swatch</span><span class="p">(</span><span class="s1">&#39;#27ae60&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">Record (your best)&lt;br&gt;&quot;</span>
+                     <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">_swatch</span><span class="p">(</span><span class="s1">&#39;#f0a500&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">Close to record&lt;br&gt;&quot;</span>
+                     <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">_swatch</span><span class="p">(</span><span class="s1">&#39;#e74c3c&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">Worse than record&quot;</span><span class="p">)</span>
+            <span class="n">kind</span>  <span class="o">=</span> <span class="s1">&#39;Turn&#39;</span> <span class="k">if</span> <span class="n">mode</span> <span class="o">==</span> <span class="s1">&#39;turns-performance&#39;</span> <span class="k">else</span> <span class="s1">&#39;Hill&#39;</span>
+            <span class="n">title</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;AutoDNA — </span><span class="si">{</span><span class="n">kind</span><span class="si">}</span><span class="s2"> Fuel Performance&quot;</span>
+            <span class="n">stat</span>  <span class="o">=</span> <span class="p">(</span><span class="sa">f</span><span class="s2">&quot;potential savings: </span><span class="si">{</span><span class="nb">getattr</span><span class="p">(</span><span class="n">d</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;total_savings_l&#39;</span><span class="p">,</span><span class="w"> </span><span class="mf">0.0</span><span class="p">)</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2"> L &quot;</span>
+                     <span class="sa">f</span><span class="s2">&quot;vs your records&quot;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">rows</span>  <span class="o">=</span> <span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;&lt;b style=&#39;font-size:10px;color:#555&#39;&gt;Background = Hill&lt;/b&gt;&lt;br&gt;&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">_swatch</span><span class="p">(</span><span class="s1">&#39;#9e9e9e&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">Flat&amp;nbsp;&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">_swatch</span><span class="p">(</span><span class="s1">&#39;#2e7d32&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">Uphill&amp;nbsp;&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">_swatch</span><span class="p">(</span><span class="s1">&#39;#6a1b9a&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">Downhill&lt;br&gt;&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;&lt;b style=&#39;font-size:10px;color:#555&#39;&gt;Foreground = Turn&lt;/b&gt;&lt;br&gt;&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">_swatch</span><span class="p">(</span><span class="s1">&#39;#9e9e9e&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">Straight&amp;nbsp;&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">_swatch</span><span class="p">(</span><span class="s1">&#39;#1565c0&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">Left&amp;nbsp;&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">_swatch</span><span class="p">(</span><span class="s1">&#39;#e65100&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">Right&quot;</span>
+            <span class="p">)</span>
+            <span class="n">title</span> <span class="o">=</span> <span class="s2">&quot;AutoDNA — Combined&quot;</span>
+            <span class="n">stat</span>  <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Turns: </span><span class="si">{</span><span class="n">n_turns</span><span class="si">}</span><span class="s2"> · Hills: </span><span class="si">{</span><span class="n">n_hills</span><span class="si">}</span><span class="s2"> GPS pts&quot;</span>
+
+        <span class="n">filter_label</span> <span class="o">=</span> <span class="s2">&quot;short-event filter ON&quot;</span> <span class="k">if</span> <span class="n">merged</span> <span class="k">else</span> <span class="s2">&quot;no short-event filter&quot;</span>
+        <span class="c1">#vstavi legendu kot fiksni html element v spodnjem levem kotu karte</span>
+        <span class="n">legend</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">        &lt;div style=&quot;position:fixed;bottom:24px;left:24px;z-index:9999;</span>
+<span class="s2">                    background:white;padding:10px 14px;border-radius:6px;</span>
+<span class="s2">                    border:1px solid #ccc;font-family:sans-serif;font-size:12px;</span>
+<span class="s2">                    box-shadow:0 2px 6px rgba(0,0,0,.2)&quot;&gt;</span>
+<span class="s2">          &lt;b style=&quot;font-size:13px&quot;&gt;</span><span class="si">{</span><span class="n">title</span><span class="si">}</span><span class="s2">&lt;/b&gt;&lt;br&gt;</span>
+<span class="s2">          </span><span class="si">{</span><span class="n">rows</span><span class="si">}</span><span class="s2">&lt;br&gt;</span>
+<span class="s2">          &lt;hr style=&quot;margin:6px 0&quot;&gt;</span>
+<span class="s2">          &lt;span style=&quot;font-size:10px;color:#888&quot;&gt;</span>
+<span class="s2">            </span><span class="si">{</span><span class="n">N</span><span class="si">}</span><span class="s2"> GPS pts &amp;bull; GPS-only detection&lt;br&gt;</span>
+<span class="s2">            </span><span class="si">{</span><span class="n">filter_label</span><span class="si">}</span><span class="s2">&lt;br&gt;</span>
+<span class="s2">            </span><span class="si">{</span><span class="n">stat</span><span class="si">}</span><span class="s2">&lt;br&gt;</span>
+<span class="s2">            click event for details</span>
+<span class="s2">          &lt;/span&gt;</span>
+<span class="s2">        &lt;/div&gt;</span>
+<span class="s2">        &quot;&quot;&quot;</span>
+        <span class="n">fmap</span><span class="o">.</span><span class="n">get_root</span><span class="p">()</span><span class="o">.</span><span class="n">html</span><span class="o">.</span><span class="n">add_child</span><span class="p">(</span><span class="n">folium</span><span class="o">.</span><span class="n">Element</span><span class="p">(</span><span class="n">legend</span><span class="p">))</span>
+
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;cache_dir = get_data_dir()</span>
+<span class="sd">        tmp = str(cache_dir / &#39;current_map.html&#39;)</span>
+<span class="sd">        fmap.save(tmp)</span>
+<span class="sd">        self._tmp_path = tmp</span>
+<span class="sd">        self.webview.setUrl(QUrl.fromLocalFile(tmp))&quot;&quot;&quot;</span>
+        
+        <span class="kn">import</span><span class="w"> </span><span class="nn">io</span>
+        <span class="n">html_content</span> <span class="o">=</span> <span class="n">io</span><span class="o">.</span><span class="n">BytesIO</span><span class="p">()</span>
+        <span class="n">fmap</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">html_content</span><span class="p">,</span> <span class="n">close_file</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">html_str</span> <span class="o">=</span> <span class="n">html_content</span><span class="o">.</span><span class="n">getvalue</span><span class="p">()</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s1">&#39;utf-8&#39;</span><span class="p">)</span>
+        
+        <span class="c1"># load HTML directly — no file system involved</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">webview</span><span class="o">.</span><span class="n">setHtml</span><span class="p">(</span><span class="n">html_str</span><span class="p">,</span> <span class="n">QUrl</span><span class="p">(</span><span class="s2">&quot;http://localhost/&quot;</span><span class="p">))</span></div>
+
+        
+    
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../../index.html">AutoDNA</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../../modules.html">App Modules</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2026, AutoDNA Project.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.1.0</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

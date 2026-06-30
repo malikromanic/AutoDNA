@@ -1,17 +1,14 @@
 # -*- coding: utf-8 -*-
-"""
+"""Per-drive feature extraction and persistent storage for the fuel-regression model.
+
+Hooks into the live app *after* :class:`~app.data_loader.DriveDataLoader`
+has loaded the GPS/OBD CSV, since that's where distance, fuel ground
+truth, and segment data come from. The IMU side reads the STM32 ``.bin``
+recording for the same drive, if one is present.
+
 Created on Sun Jun 21 21:53:17 2026
 
 @author: mihal
-"""
-
-"""
-fuel_features.py
-=================
-Per-drive aggregate feature extraction + persistent storage for the
-fuel-regression model. Hooks into the live app AFTER DriveDataLoader has
-loaded the GPS/OBD CSV, since that's where distance/fuel ground truth
-and segment data come from.
 """
 
 import json
@@ -118,9 +115,20 @@ def swap_axes_right_flip(sensors):
 
 
 def compute_drive_features(sensors_raw: dict, drive_data) -> dict:
-    """
-    Compute the full 7-feature dict for one drive.
-    Combines IMU features (from STM32) and GPS features (from OBD CSV).
+    """Compute the full feature dict for one drive, combining IMU and GPS signals.
+
+    Args:
+        sensors_raw: Resampled-to-50Hz sensor dict as returned by
+            :func:`AutoDNA.ai.preprocessing.load_sensor_data`.
+        drive_data: The :class:`~app.data_loader.DriveData` for the same
+            drive, already loaded from the CSV.
+
+    Returns:
+        dict: ``harsh_accel_rate``, ``harsh_braking_rate``, ``rms_jerk``
+        (IMU), ``avg_speed_kmh``, ``speed_variability``,
+        ``idle_time_pct`` (GPS), and ``distance_km`` / ``_duration_min``
+        (metadata) — the feature set consumed by
+        :mod:`app.fuel_model`.
     """
     if LIVE_DEVICE_NEEDS_RIGHT_FLIP_CORRECTION:
         sensors_raw = swap_axes_right_flip(sensors_raw)
@@ -175,6 +183,8 @@ def compute_drive_features(sensors_raw: dict, drive_data) -> dict:
 
 @dataclass
 class DriveRecord:
+    """One entry of the persistent fuel-feature store — the Drives history's underlying record."""
+
     drive_name:  str
     drive_path:  str        # path to the drive folder — needed to reload the drive from the Drives tab
     features:    dict
@@ -183,12 +193,14 @@ class DriveRecord:
  
  
 def load_store() -> list[dict]:
+    """Read all stored drive records (used by the Drives page and the fuel model)."""
     if not STORE_PATH.exists():
         return []
     return json.loads(STORE_PATH.read_text())
- 
- 
+
+
 def save_store(records: list[dict]):
+    """Overwrite the persistent fuel-feature store with the given records."""
     STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STORE_PATH.write_text(json.dumps(records, indent=2))
  

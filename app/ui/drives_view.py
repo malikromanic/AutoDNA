@@ -1,6 +1,9 @@
-# ============================================================================
-# Drives View — browse, reload and delete stored drives
-# ============================================================================
+"""Drives page: browse, reload, and delete the persisted drive history.
+
+Backed by ``fuel_features_store.json`` via :mod:`app.feature_loader`.
+Only drives that had a STM32 ``.bin`` file processed end up here — see
+the gating note in :func:`app.feature_loader.process_drive_fuel_features`.
+"""
 
 from datetime import datetime
 

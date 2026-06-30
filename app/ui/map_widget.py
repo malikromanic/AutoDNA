@@ -9,6 +9,14 @@
 #  zavoji / klanci / kombinirano - katera gps detekcija se obarva
 #  filtriraj kratke odseke       - iznici odseke krajse od min_run praga
 #============================================================================
+"""Folium-based route map embedded in a QWebEngineView.
+
+Renders the GPS track as a colored polyline in one of five modes
+(Turns, Hills, Combined, Turns-performance, Hills-performance) and
+rebuilds a detailed per-segment list (:data:`MapWidget.segments`) on
+every render, intended for future regression work beyond what the live
+app currently uses it for.
+"""
 
 import math
 import numpy as np
@@ -279,6 +287,14 @@ def _draw_colored_route(fmap, lat, lon,
                         task_name: str,
                         seg_lookup: dict = None,
                         add_popup: bool = True):
+    """Draw one colored polyline layer onto ``fmap``, one per detected-class run.
+
+    Adds a tooltip/popup with segment metrics (pulled from
+    ``seg_lookup``) and a start-of-segment marker for each non-zero run
+    when ``add_popup`` is set; used to layer turns over hills in
+    Combined mode by calling this twice with ``add_popup=False`` for
+    the background layer.
+    """
     N    = len(lat)
     segs = _route_segments(pred_at_gps)
 
@@ -459,6 +475,7 @@ class MapWidget(QWidget):
     # ── Javne metode ─────────────────────────────────────────────────────────
             
     def set_drive_data(self, drive_data):
+        """Store the loaded drive and render the map in the current mode."""
         #shrani podatke in takoj izrisi karto
         self.drive_data = drive_data
         self._render_map()
@@ -501,6 +518,14 @@ class MapWidget(QWidget):
         """)
 
     def _render_map(self):
+        """Rebuild the Folium map for the current drive and mode, and load it into the webview.
+
+        Re-filters the turn/hill predictions for the active short-event
+        filter setting, rebuilds :data:`self.segments`, draws the
+        selected mode's polyline layer(s), and writes the legend before
+        pushing the resulting HTML into the embedded ``QWebEngineView``
+        (in memory, without touching disk).
+        """
         d = self.drive_data
         #preveri da so podatki nalozeni in da ima gps sled vsaj 2 tocki
         if d is None or len(d.gps_lat) < 2:

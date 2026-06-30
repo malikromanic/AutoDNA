@@ -1,6 +1,9 @@
-# ============================================================================
-# Elevation View — DEM elevation profile, road grade, and event distribution
-# ============================================================================
+"""Elevation page: DEM elevation/grade profile and turn/hill distance breakdown.
+
+The grade subplot under the elevation chart is currently commented out
+in :meth:`ElevationView._update_profile_chart` (kept for a possible
+future re-enable); only the elevation profile itself is drawn.
+"""
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame
@@ -172,6 +175,7 @@ class ElevationView(QWidget):
 
     # ── Data update ──────────────────────────────────────────────────────────
     def set_drive_data(self, drive_data):
+        """Refresh the Live Statistics card and both charts for a newly loaded drive."""
         self.drive_data = drive_data
         self._update_metrics()
         self._update_profile_chart()

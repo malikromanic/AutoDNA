@@ -1,11 +1,11 @@
-# ============================================================================
-# AutoDNA — shared segment helpers (UI-free)
-#
-# A "segment" is a consecutive run of GPS points with the same turn/hill class.
-# These helpers turn the per-point class arrays on DriveData into segments, used
-# by both the map widget (rendering) and segment_records (fuel records), so the
-# two stay consistent.
-# ============================================================================
+"""Shared turn/hill segment helpers, used by both the map widget and segment_records.
+
+A "segment" is a consecutive run of GPS points with the same turn/hill
+class. These helpers turn the per-point class arrays on
+:class:`~app.data_loader.DriveData` into segments using one canonical
+filter + gap-merge pass, so the map's Turns/Hills view and the fuel
+records engine always agree on where an event starts and ends.
+"""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ def event_segments(d) -> list[dict]:
     Lightweight event segments for the records engine.
 
     Each dict: kind ('turn'|'hill'), direction (1|2), i0, i1 (inclusive),
-    duration_s, magnitude (turn = net heading change deg; hill = mean |grade| %).
+    duration_s, magnitude (turn = net heading change deg; hill = mean abs(grade) %).
     Uses the same canonical filtering as the default map view, so the records
     coloring lines up with the Turns/Hills views.
     """

@@ -1,6 +1,9 @@
-# ============================================================================
-# Dashboard View — overview metrics, map, and GPS analysis summary
-# ============================================================================
+"""Dashboard page: metric cards, the route map, and the Drive Summary panel.
+
+This is the page shown right after a drive loads
+(:meth:`~app.autodna_app.AutoDNAApplication._load_drive` calls
+:meth:`DashboardView.set_drive_data`).
+"""
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QGridLayout, QScrollArea
@@ -14,6 +17,7 @@ from AutoDNA.app.ui.map_widget import MapWidget
 
 # ── Segment helpers (a "segment" is a run of the same non-zero class) ────────
 def _count_segments(preds) -> int:
+    """Count how many separate non-zero runs occur in a per-point class array."""
     preds = np.asarray(preds)
     n, prev = 0, 0
     for v in preds:
@@ -38,6 +42,7 @@ def _class_segments(preds, value):
 
 
 def _longest_segment_m(preds, cum_distance_m, value) -> float:
+    """Length in metres of the longest run where ``preds == value``."""
     best = 0.0
     for s, e in _class_segments(preds, value):
         best = max(best, float(cum_distance_m[e] - cum_distance_m[s]))
@@ -275,6 +280,7 @@ class DashboardView(QWidget):
 
     # ── Data update ──────────────────────────────────────────────────────────
     def set_drive_data(self, drive_data):
+        """Refresh the metric cards, map, and Drive Summary panel for a newly loaded drive."""
         self.drive_data = drive_data
         self._update_metric_cards()
         self.map_widget.set_drive_data(drive_data)

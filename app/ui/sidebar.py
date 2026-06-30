@@ -1,6 +1,9 @@
-# ============================================================================
-# Sidebar Navigation Component
-# ============================================================================
+"""Left sidebar widget: branding, the Open Drive button, and page navigation.
+
+:data:`NAV_PAGES` is the single source of truth for which pages exist
+and in what order — :class:`~app.autodna_app.AutoDNAApplication` maps
+these same page ids onto its ``QStackedWidget`` indices.
+"""
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QFileDialog, QFrame
@@ -161,6 +164,7 @@ class Sidebar(QWidget):
         self.page_changed.emit(page_id)
 
     def set_drive_statistics(self, distance_km: float, duration_sec: float, num_events: int):
+        """Update the "DRIVE STATISTICS" block with the loaded drive's distance, duration, average speed, and event count."""
         duration_min = duration_sec / 60
         avg_speed = distance_km / max(duration_sec / 3600, 0.001)
         self.stats_text.setText(

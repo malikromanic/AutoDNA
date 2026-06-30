@@ -1,6 +1,10 @@
-# ============================================================================
-# AutoDNA - Main Application Window  (GPS-only: turns + DEM hills, no AI)
-# ============================================================================
+"""Main application window — wires the sidebar, the four pages, and drive loading together.
+
+GPS-only pipeline: turns from heading change, hills from DEM grade, no
+IMU/ML involved in detection. The optional STM32 ``.bin`` feature
+extraction and Ridge fuel model run as a second, independent step after
+the GPS analysis has already been displayed.
+"""
 
 import traceback
 from pathlib import Path
@@ -183,6 +187,15 @@ class AutoDNAApplication(QMainWindow):
     
     
     def _load_drive(self, drive_path: str):
+        """Load a drive folder and refresh every view with the result.
+
+        Runs GPS/DEM analysis and segment-records evaluation first so the
+        Dashboard, Elevation, and map update immediately; STM32 feature
+        extraction and the Ridge fuel model run afterward and are allowed
+        to fail silently (logged, not raised) since they're optional.
+        Errors from the GPS stage itself are caught and shown to the user
+        via :meth:`_handle_load_error`.
+        """
         try:
             drive_path = _resolve_drive_path(drive_path)   # re-root teammate paths
             self.status.showMessage("Loading drive… (looking up DEM elevation)")
@@ -275,6 +288,7 @@ class AutoDNAApplication(QMainWindow):
                 "You can try selecting a different drive folder.",
             )
     def _handle_load_error(self, detail_text: str, title_line: str, body: str):
+        """Log the full traceback to ``autodna_crash.log`` and show a plain-language error dialog."""
         #shrani traceback za debug, prikazi uporabniku prijazno sporocilo
         tb = detail_text if '\n' in detail_text else traceback.format_exc()
         print(tb)

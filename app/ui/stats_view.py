@@ -1,6 +1,11 @@
-# ============================================================================
-# Stats View — fuel model feature importance and key takeaways
-# ============================================================================
+"""Stats page: per-segment potential savings, plus Ridge-model feature importance.
+
+Two independent systems share this page: the GPS-only Potential Savings
+panel (populated by :meth:`StatsView.set_savings`, fed from
+:mod:`app.segment_records`) and the Ridge-regression Key
+Takeaways/ranking sections (populated by :meth:`StatsView.set_result`,
+fed from :mod:`app.fuel_model`).
+"""
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
@@ -219,6 +224,7 @@ class _PieChart(FigureCanvasQTAgg):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
     def update_chart(self, importance: list[dict]):
+        """Redraw the pie chart from a ranked feature-importance list (see :meth:`app.fuel_model.FuelModel.global_importance`)."""
         self._ax.clear()
         self._ax.set_facecolor('#1a1a2e')
 

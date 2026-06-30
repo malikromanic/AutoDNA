@@ -1,14 +1,14 @@
-# ============================================================================
-# AutoDNA — GPS-based event detection (turns + hills)
-#
-# Everything here is derived purely from the GPS track:
-#   Turns — net heading change over a short look-around distance window.
-#   Hills — road grade (Δelevation / Δdistance) from a DEM elevation profile.
-#
-# No IMU, no ML. Class codes match the map widget colour tables:
-#   turn: 0 = straight   1 = left    2 = right
-#   hill: 0 = flat       1 = uphill  2 = downhill
-# ============================================================================
+"""GPS/DEM-only turn and hill detection.
+
+Everything here is derived purely from the GPS track:
+
+* Turns — net heading change over a short look-around distance window.
+* Hills — road grade (delta elevation / delta distance) from a DEM
+  elevation profile.
+
+No IMU, no ML. Class codes match the map widget colour tables: turn
+``0=straight 1=left 2=right``, hill ``0=flat 1=uphill 2=downhill``.
+"""
 
 from __future__ import annotations
 
@@ -97,10 +97,10 @@ def compute_turns(heading: np.ndarray, cum_dist: np.ndarray,
     """
     Detect turns as contiguous regions, not just apex points.
 
-    For each point, `rate` is the net signed heading change over a ±window_m/2
+    For each point, ``rate`` is the net signed heading change over a ±window_m/2
     span (bearing is clockwise from north, so positive = right, negative = left).
-    A turn region is a run of points that are *at least* curving (|rate| ≥
-    exit_deg) and contains at least one apex point (|rate| ≥ enter_deg). This
+    A turn region is a run of points that are *at least* curving (abs(rate) >=
+    exit_deg) and contains at least one apex point (abs(rate) >= enter_deg). This
     captures the whole curve — entry, apex and exit — as one segment. Same-
     direction regions separated by a short straight are then bridged, and blips
     shorter than min_seg_m are dropped.
@@ -108,7 +108,7 @@ def compute_turns(heading: np.ndarray, cum_dist: np.ndarray,
     Returns
     -------
     preds : (N,) int32  0=straight 1=left 2=right
-    conf  : (N,) float64 0..1   (|rate| scaled, saturating at 90°)
+    conf  : (N,) float64 0..1   (abs(rate) scaled, saturating at 90°)
     rate  : (N,) float64        signed net heading change over the window (deg)
     """
     heading = np.asarray(heading, dtype=float)

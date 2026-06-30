@@ -2,6 +2,14 @@
 # AutoDNA - AI-Powered Driving Analysis Platform
 # Dashboard Application (PyQt6)
 # ============================================================================
+"""Application entry point.
+
+Sets up the environment (Qt/WebEngine flags, sys.path, frozen-build
+paths) before any Qt or AutoDNA import happens, then builds and shows
+the main window. Also installs a top-level exception handler so startup
+crashes are written to a log file and, if possible, shown in a message
+box instead of silently closing the console window.
+"""
 
 import sys
 import traceback
@@ -10,11 +18,15 @@ from pathlib import Path
 
 os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--no-sandbox --disable-gpu --disable-software-rasterizer --disable-gpu-compositing"
 
+# every module imports as "AutoDNA.xxx", so the GITHUB folder (one level
+# above AutoDNA/) needs to be on sys.path, not AutoDNA/ itself
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
 if getattr(sys, 'frozen', False):
     exe_dir = Path(sys.executable).parent
     os.chdir(exe_dir)
     internal = exe_dir / '_internal'
-    
+
     os.environ["QTWEBENGINEPROCESS_PATH"] = str(
         internal / "PyQt6" / "Qt6" / "bin" / "QtWebEngineProcess.exe"
     )
@@ -29,6 +41,11 @@ from AutoDNA.app.get_path import get_data_dir
 
 
 def main():
+    """Create the QApplication, log the active Qt paths, and show the main window.
+
+    Blocks until the window is closed (``app.exec()``), then exits the
+    process with Qt's return code.
+    """
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
 

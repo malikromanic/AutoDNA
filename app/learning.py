@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
+"""Manual debug script for inspecting the fuel model's learning curve.
+
+Not imported anywhere else — run directly (``python -m app.learning``)
+against whatever drives are currently in the feature store to eyeball how
+fuel-model error changes with the number of accumulated drives.
+
 Created on Thu Jun 25 22:07:00 2026
 
 @author: mihal

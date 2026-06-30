@@ -1,13 +1,14 @@
-# ============================================================================
-# AutoDNA — GPS drive loader
-#
-# Everything is derived from the GPS/OBD2 CSV. No IMU, no ML:
-#   Turns  ← GPS heading change            (app/gps_analysis.compute_turns)
-#   Hills  ← DEM ground-elevation grade    (app/elevation + compute_hills)
-#
-# The device's own GPS altitude column is intentionally ignored — elevation is
-# looked up from a DEM (online EU-DEM 25 m, Copernicus GLO-90 fallback).
-# ============================================================================
+"""Parses a drive folder's GPS/OBD2 CSV into a :class:`DriveData` object.
+
+Everything here is derived from the CSV alone — no IMU, no ML:
+
+* Turns are detected from GPS heading change (:func:`app.gps_analysis.compute_turns`).
+* Hills are detected from DEM ground-elevation grade (:func:`app.gps_analysis.compute_hills`).
+
+The device's own GPS altitude column is intentionally ignored — elevation is
+looked up from a DEM (online EU-DEM 25 m, Copernicus GLO-90 fallback) via
+:mod:`app.elevation`.
+"""
 
 from __future__ import annotations
 
@@ -88,6 +89,21 @@ class DriveDataLoader:
         self.provider = provider or get_default_provider()
 
     def load_drive(self, progress_cb=None) -> DriveData:
+        """Parse the drive's CSV and run turn/hill detection on it.
+
+        Args:
+            progress_cb: Optional callable invoked with a short status
+                string at each stage (CSV parsing, elevation lookup,
+                detection), used by the UI to update the status bar.
+
+        Returns:
+            DriveData: The fully populated drive, ready for display and
+            for :func:`app.segment_records.evaluate_drive`.
+
+        Raises:
+            FileNotFoundError: No ``.csv`` file exists in ``drive_dir``.
+            ValueError: The CSV has fewer than two distinct GPS fixes.
+        """
         def _log(msg):
             print(f"[AutoDNA] {msg}")
             if progress_cb:
@@ -169,6 +185,13 @@ class DriveDataLoader:
 
     # ── GPS loading ───────────────────────────────────────────────────────--
     def _load_gps(self, csv_path: Path):
+        """Reduce the raw OBD2 CSV to one GPS fix per second and a heading trace.
+
+        The CSV repeats every PID for every poll, so this collapses each
+        second to its first lat/lon reading, drops rows sitting on the
+        same rounded coordinate as the previous one (parked/stationary),
+        and derives speed and heading from what's left.
+        """
         df = pd.read_csv(csv_path, sep=";", quotechar='"')
         df.columns = df.columns.str.lower().str.strip()
 
@@ -217,6 +240,11 @@ def _align_speed(speed_df: pd.DataFrame, timestamps: np.ndarray) -> np.ndarray:
 
 
 def _compute_heading(lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+    """Compute initial bearing (0-360°) between consecutive GPS points.
+
+    Point 0 is given the same heading as point 1 since there's no
+    previous point to compute a bearing from.
+    """
     heading = np.zeros(len(lat))
     for i in range(1, len(lat)):
         dlon = math.radians(lon[i] - lon[i - 1])
@@ -235,6 +263,13 @@ _MIN_DIST_KM_FOR_AVG  = 0.1
 
 
 def _extract_fuel_l(df: pd.DataFrame, distance_km: float) -> float:
+    """Total fuel burned over the drive, in litres.
+
+    Tries three sources in order: a direct 'Fuel used' PID (difference of
+    last and first reading), trapezoidal integration of an instant fuel
+    rate PID, and finally a fixed L/100km estimate if neither PID is
+    present in the CSV.
+    """
     if 'pid' in df.columns:
         pid_col = df['pid'].str.strip()
 

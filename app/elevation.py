@@ -1,17 +1,16 @@
-# ============================================================================
-# AutoDNA — Elevation provider (DEM lookup for hill detection)
-#
-# Hills are derived from ground elevation along the GPS track, NOT from the
-# device's (inaccurate) GPS altitude. Elevation comes from a Digital Elevation
-# Model (DEM) — the same idea Strava/Garmin use for "elevation correction".
-#
-# Key-free public DEM APIs (work out of the box):
-#   OpenTopoData EU-DEM 25 m  →  Open-Meteo Copernicus GLO-90 (global fallback)
-#
-# EU-DEM covers all of Europe; the Open-Meteo fallback is global, so points
-# just outside EU-DEM still resolve. Results are cached on disk so re-opening a
-# drive is instant and works offline afterwards.
-# ============================================================================
+"""Online DEM elevation lookup used for hill/grade detection.
+
+Hills are derived from ground elevation along the GPS track, not from the
+device's own (often inaccurate or absent) GPS altitude reading. Elevation
+instead comes from a Digital Elevation Model (DEM) — the same idea
+Strava/Garmin use for "elevation correction".
+
+Two key-free public DEM APIs are chained: OpenTopoData EU-DEM 25 m first,
+falling back to Open-Meteo's Copernicus GLO-90 (global coverage, ~90 m)
+for points outside Europe or when OpenTopoData is unreachable. Results
+are cached on disk (:data:`_CACHE_FILE`) so re-opening a drive is instant
+and works offline afterwards.
+"""
 
 from __future__ import annotations
 
@@ -46,6 +45,8 @@ class ElevationProvider(ABC):
 
 # ── On-disk cache ───────────────────────────────────────────────────────────
 class _ElevationCache:
+    """JSON-backed lat/lon → elevation cache, keyed to 6 decimal places (~0.1 m)."""
+
     def __init__(self, path: Path = _CACHE_FILE):
         self.path = path
         self._data: dict[str, float] = {}
@@ -94,6 +95,20 @@ class OnlineElevationProvider(ElevationProvider):
 
     # -- public ---------------------------------------------------------------
     def elevations(self, lats: np.ndarray, lons: np.ndarray) -> np.ndarray:
+        """Look up elevation for each point, serving cached hits first.
+
+        Misses are fetched from the API in batches of ``_BATCH`` points,
+        rate-limited by ``_SLEEP`` between batches, and written back to
+        the cache as they resolve.
+
+        Args:
+            lats: GPS latitudes.
+            lons: GPS longitudes, same length as ``lats``.
+
+        Returns:
+            np.ndarray: Elevation in metres per point; ``np.nan`` where
+            the lookup failed for both providers.
+        """
         lats = np.asarray(lats, dtype=float)
         lons = np.asarray(lons, dtype=float)
         out = np.full(len(lats), np.nan, dtype=float)

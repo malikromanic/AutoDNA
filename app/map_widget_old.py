@@ -9,6 +9,12 @@
 #  zavoji / klanci / kombinirano - katera gps detekcija se obarva
 #  filtriraj kratke odseke       - iznici odseke krajse od min_run praga
 #============================================================================
+"""Superseded by :mod:`app.ui.map_widget`; not imported anywhere in the live app.
+
+This was the GPS-altitude-based hill detection version of the map
+widget, before hill detection moved to DEM road grade. Left in the
+repo for reference only.
+"""
 
 import math
 import os

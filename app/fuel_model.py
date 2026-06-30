@@ -220,6 +220,7 @@ class FuelModel:
 
     @property
     def is_fitted(self) -> bool:
+        """Whether :meth:`fit` has been called successfully."""
         return self._fitted
 
     @property
@@ -317,14 +318,10 @@ def bootstrap_coefficients(records: list[dict],
     """
     Bootstrap confidence intervals for Ridge coefficients.
     Treats the full pipeline (StandardScaler + Ridge) as a black box.
-    
-    Returns dict: feature_name -> {
-        'mean': float,
-        'lower': float,   # lower bound of CI
-        'upper': float,   # upper bound of CI
-        'ci_contains_zero': bool,
-        'confidence': str  # 'high', 'low', or 'negligible'
-    }
+
+    Returns a dict keyed by feature name, each value a dict with
+    ``mean``, ``lower``/``upper`` (CI bounds), ``ci_contains_zero``
+    (bool), and ``confidence`` (``'high'``, ``'low'``, or ``'negligible'``).
     """
     from sklearn.linear_model import Ridge
     from sklearn.preprocessing import StandardScaler

@@ -8,6 +8,15 @@
 #                 ai/preprocessing.py
 #                 ai/window_based/dataset_output/model_*.json
 # ============================================================================
+"""Window-based IMU turn/hill classifier (XGBoost), not wired into the live app.
+
+An earlier architecture used this to detect turns and hills directly
+from IMU sensor windows. The current app detects both from GPS/DEM data
+instead (see :mod:`app.gps_analysis`), so nothing in the live
+application imports this module — it's exercised only by
+``tests/test_pipeline.py`` and kept for reference / possible future
+reintroduction of a learned detector.
+"""
 
 import os
 import sys
@@ -160,11 +169,18 @@ def make_windows(signal: np.ndarray):
 
 # ── XGBoost inference ─────────────────────────────────────────────────────────
 def models_exist() -> bool:
+    """Whether both trained model files are present in ``MODEL_DIR``."""
     return ((MODEL_DIR / 'model_turn.json').exists() and
             (MODEL_DIR / 'model_hill.json').exists())
 
 
 def load_xgb_models():
+    """Load the turn and hill XGBoost classifiers from ``MODEL_DIR``.
+
+    Raises:
+        FileNotFoundError: Either model file is missing — train them
+            first via :func:`train_models`.
+    """
     from xgboost import XGBClassifier
     if not models_exist():
         raise FileNotFoundError(
@@ -288,6 +304,12 @@ def train_models(progress_cb=None):
 
 
 def _label_window(t_start: float, t_end: float, labels: list):
+    """Assign a window its turn/hill class by majority time-overlap with the labeled intervals.
+
+    A class is only assigned if the best-overlapping label covers at
+    least 30% of the window's duration; otherwise the window is
+    labeled 'none' for that task.
+    """
     TURN_MAP = {'none': 0, 'left': 1, 'right': 2}
     HILL_MAP  = {'none': 0, 'up': 1, 'down': 2}
     dur = max(t_end - t_start, 1e-9)

@@ -1,20 +1,16 @@
-# ============================================================================
-# AutoDNA — per-segment fuel records & potential-savings (UI-free)
-#
-# Every detected turn/hill segment is bucketed by type + magnitude
-# (e.g. "left_turn_0-10", "uphill_2-5"). For each bucket we keep the LOWEST
-# fuel-consumption rate ever seen (the "record"), per vehicle.
-#
-# On each drive, for every segment:
-#   • new best  → overwrite the record, no savings.
-#   • worse     → savings_L = (rate - record) × duration_s.
-# Summed over all segments → total potential savings the driver could have made.
-#
-# Each segment also gets a performance class for the map:
-#   1 = green  (record set / tied)
-#   2 = orange (worse, but within ORANGE_MAX_RATIO of the record)
-#   3 = red    (significantly worse)
-# ============================================================================
+"""Per-segment fuel records and potential-savings ("Strava-style personal best").
+
+Every detected turn/hill segment is bucketed by type and magnitude (e.g.
+``left_turn_0-10``, ``uphill_2-5``). For each bucket the lowest
+fuel-consumption rate ever seen is kept as the "record", per vehicle.
+
+On each drive, for every segment: a new best overwrites the record with
+no savings counted; anything worse adds
+``(rate - record) * duration_s`` to the drive's total potential savings.
+Each segment also gets a performance class for the map — 1 = green
+(record set/tied), 2 = orange (worse, but within
+:data:`ORANGE_MAX_RATIO` of the record), 3 = red (significantly worse).
+"""
 
 from __future__ import annotations
 
@@ -74,6 +70,7 @@ def _fmt(x: float) -> str:
 
 
 def bucket_key(seg: dict) -> str:
+    """Map an event segment dict (from :func:`app.segments.event_segments`) to its record bucket id."""
     if seg["kind"] == "turn":
         side = "left_turn" if seg["direction"] == 1 else "right_turn"
         return f"{side}_{_turn_bin(seg['magnitude'])}"
@@ -111,8 +108,9 @@ def _segment_rate(fuel_rate: np.ndarray | None, i0: int, i1: int) -> float:
 def evaluate_drive(d, store_path: Path = _STORE_PATH) -> dict:
     """
     Bucket every segment, compare to the per-vehicle records, accumulate
-    potential savings, and attach results to the DriveData instance:
-      d.vehicle, d.turn_perf, d.hill_perf, d.total_savings_l, d.savings_breakdown
+    potential savings, and attach results to the DriveData instance —
+    ``d.vehicle``, ``d.turn_perf``, ``d.hill_perf``, ``d.total_savings_l``,
+    ``d.savings_breakdown``.
 
     The records store is updated in place (new bests are persisted).
     Returns a summary dict (also suitable for the Stats view).

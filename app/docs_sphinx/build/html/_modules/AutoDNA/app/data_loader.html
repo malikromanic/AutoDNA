@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoDNA.app.data_loader &#8212; AutoDNA 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../../_static/documentation_options.js?v=f2a433a1"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for AutoDNA.app.data_loader</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Parses a drive folder&#39;s GPS/OBD2 CSV into a :class:`DriveData` object.</span>
+
+<span class="sd">Everything here is derived from the CSV alone — no IMU, no ML:</span>
+
+<span class="sd">* Turns are detected from GPS heading change (:func:`app.gps_analysis.compute_turns`).</span>
+<span class="sd">* Hills are detected from DEM ground-elevation grade (:func:`app.gps_analysis.compute_hills`).</span>
+
+<span class="sd">The device&#39;s own GPS altitude column is intentionally ignored — elevation is</span>
+<span class="sd">looked up from a DEM (online EU-DEM 25 m, Copernicus GLO-90 fallback) via</span>
+<span class="sd">:mod:`app.elevation`.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">AutoDNA.app.elevation</span><span class="w"> </span><span class="kn">import</span> <span class="n">ElevationProvider</span><span class="p">,</span> <span class="n">get_default_provider</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">AutoDNA.app.gps_analysis</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">cumulative_distance</span><span class="p">,</span>
+    <span class="n">compute_turns</span><span class="p">,</span>
+    <span class="n">compute_hills</span><span class="p">,</span>
+    <span class="n">elevation_gain_loss</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<div class="viewcode-block" id="DriveData">
+<a class="viewcode-back" href="../../../modules.html#AutoDNA.app.data_loader.DriveData">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">DriveData</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A complete drive session, fully derived from GPS + DEM.&quot;&quot;&quot;</span>
+
+    <span class="c1"># GPS track (deduplicated, movement-filtered)</span>
+    <span class="n">gps_timestamps</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>   <span class="c1"># (N,)  seconds from start (0-indexed)</span>
+    <span class="n">gps_lat</span><span class="p">:</span>        <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>   <span class="c1"># (N,)</span>
+    <span class="n">gps_lon</span><span class="p">:</span>        <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>   <span class="c1"># (N,)</span>
+    <span class="n">gps_speed</span><span class="p">:</span>      <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>   <span class="c1"># (N,)  km/h</span>
+    <span class="n">gps_heading</span><span class="p">:</span>    <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>   <span class="c1"># (N,)  degrees 0-360</span>
+    <span class="n">cum_distance_m</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>   <span class="c1"># (N,)  cumulative metres</span>
+
+    <span class="c1"># Elevation / grade (from DEM, NOT device altitude)</span>
+    <span class="n">elevation_m</span><span class="p">:</span>    <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>   <span class="c1"># (N,)  raw DEM elevation</span>
+    <span class="n">elevation_sm</span><span class="p">:</span>   <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>   <span class="c1"># (N,)  smoothed elevation used for grades</span>
+    <span class="n">grade_pct</span><span class="p">:</span>      <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>   <span class="c1"># (N,)  signed road grade %</span>
+
+    <span class="c1"># Per-point event classes (one element per GPS point)</span>
+    <span class="n">turn_preds</span><span class="p">:</span>     <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>   <span class="c1"># (N,) int32  0=straight 1=left 2=right</span>
+    <span class="n">hill_preds</span><span class="p">:</span>     <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>   <span class="c1"># (N,) int32  0=flat 1=uphill 2=downhill</span>
+    <span class="n">turn_conf</span><span class="p">:</span>      <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>   <span class="c1"># (N,) float  0..1</span>
+    <span class="n">hill_conf</span><span class="p">:</span>      <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>   <span class="c1"># (N,) float  0..1</span>
+    <span class="n">turn_rate</span><span class="p">:</span>      <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>   <span class="c1"># (N,) float  signed heading change (deg)</span>
+
+    <span class="c1"># Metadata</span>
+    <span class="n">gps_file</span><span class="p">:</span>           <span class="nb">str</span>
+    <span class="n">drive_name</span><span class="p">:</span>         <span class="nb">str</span>
+    <span class="n">drive_duration_sec</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">drive_distance_km</span><span class="p">:</span>  <span class="nb">float</span>
+    <span class="n">elevation_gain_m</span><span class="p">:</span>   <span class="nb">float</span>
+    <span class="n">elevation_loss_m</span><span class="p">:</span>   <span class="nb">float</span>
+    <span class="n">elevation_source</span><span class="p">:</span>   <span class="nb">str</span>
+    <span class="n">avg_fuel_l100km</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">fuel_consumption_l</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">fuel_rate_l_s</span><span class="p">:</span>   <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>   <span class="c1"># (N,)  instant fuel rate per GPS point (L/s)</span>
+
+    <span class="c1"># ── Per-segment fuel records (filled by segment_records.evaluate_drive) ──</span>
+    <span class="n">turn_perf</span><span class="p">:</span>         <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># (N,) 0=none 1=record 2=close 3=worse</span>
+    <span class="n">hill_perf</span><span class="p">:</span>         <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># (N,) 0=none 1=record 2=close 3=worse</span>
+    <span class="n">total_savings_l</span><span class="p">:</span>   <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>               <span class="c1"># potential fuel saved vs records</span>
+    <span class="n">savings_breakdown</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>  <span class="c1"># per-segment detail dicts</span>
+    <span class="n">vehicle</span><span class="p">:</span>           <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;default&quot;</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">n_points</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">gps_lat</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="DriveDataLoader">
+<a class="viewcode-back" href="../../../modules.html#AutoDNA.app.data_loader.DriveDataLoader">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">DriveDataLoader</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Open a drive directory containing a GPS/OBD2 `.csv` and produce DriveData.</span>
+
+<span class="sd">    A `.BIN` (IMU) file may also be present but is ignored — the IMU pipeline</span>
+<span class="sd">    now lives outside the app.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">drive_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">provider</span><span class="p">:</span> <span class="n">ElevationProvider</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">drive_dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">drive_dir</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">provider</span> <span class="o">=</span> <span class="n">provider</span> <span class="ow">or</span> <span class="n">get_default_provider</span><span class="p">()</span>
+
+<div class="viewcode-block" id="DriveDataLoader.load_drive">
+<a class="viewcode-back" href="../../../modules.html#AutoDNA.app.data_loader.DriveDataLoader.load_drive">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">load_drive</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">progress_cb</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DriveData</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Parse the drive&#39;s CSV and run turn/hill detection on it.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            progress_cb: Optional callable invoked with a short status</span>
+<span class="sd">                string at each stage (CSV parsing, elevation lookup,</span>
+<span class="sd">                detection), used by the UI to update the status bar.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            DriveData: The fully populated drive, ready for display and</span>
+<span class="sd">            for :func:`app.segment_records.evaluate_drive`.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            FileNotFoundError: No ``.csv`` file exists in ``drive_dir``.</span>
+<span class="sd">            ValueError: The CSV has fewer than two distinct GPS fixes.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">_log</span><span class="p">(</span><span class="n">msg</span><span class="p">):</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[AutoDNA] </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">progress_cb</span><span class="p">:</span>
+                <span class="n">progress_cb</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+
+        <span class="n">csv_path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_find_csv</span><span class="p">()</span>
+
+        <span class="c1"># ── GPS track ────────────────────────────────────────────────────────</span>
+        <span class="n">_log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loading GPS: </span><span class="si">{</span><span class="n">csv_path</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">ts</span><span class="p">,</span> <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span><span class="p">,</span> <span class="n">speed</span><span class="p">,</span> <span class="n">heading</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_load_gps</span><span class="p">(</span><span class="n">csv_path</span><span class="p">)</span>
+        <span class="n">cum</span> <span class="o">=</span> <span class="n">cumulative_distance</span><span class="p">(</span><span class="n">lat</span><span class="p">,</span> <span class="n">lon</span><span class="p">)</span>
+        <span class="n">_log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">lat</span><span class="p">)</span><span class="si">}</span><span class="s2"> GPS points, </span><span class="si">{</span><span class="n">cum</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> m&quot;</span><span class="p">)</span>
+
+        <span class="c1"># ── Turns (heading) ──────────────────────────────────────────────────</span>
+        <span class="n">turn_preds</span><span class="p">,</span> <span class="n">turn_conf</span><span class="p">,</span> <span class="n">turn_rate</span> <span class="o">=</span> <span class="n">compute_turns</span><span class="p">(</span><span class="n">heading</span><span class="p">,</span> <span class="n">cum</span><span class="p">)</span>
+        <span class="n">_log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Turns straight/left/right: </span><span class="si">{</span><span class="n">np</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">turn_preds</span><span class="p">,</span><span class="w"> </span><span class="n">minlength</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="c1"># ── Hills (DEM grade) ────────────────────────────────────────────────</span>
+        <span class="n">_log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Looking up elevation via </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">provider</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">…&quot;</span><span class="p">)</span>
+        <span class="n">elev</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">provider</span><span class="o">.</span><span class="n">elevations</span><span class="p">(</span><span class="n">lat</span><span class="p">,</span> <span class="n">lon</span><span class="p">)</span>
+        <span class="n">n_missing</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">isnan</span><span class="p">(</span><span class="n">elev</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span>
+        <span class="k">if</span> <span class="n">n_missing</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">elev</span><span class="p">):</span>
+            <span class="n">_log</span><span class="p">(</span><span class="s2">&quot;Elevation unavailable (offline?) — hills disabled for this drive.&quot;</span><span class="p">)</span>
+            <span class="n">source</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">provider</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> (unavailable)&quot;</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">source</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">provider</span><span class="o">.</span><span class="n">name</span>
+            <span class="k">if</span> <span class="n">n_missing</span><span class="p">:</span>
+                <span class="n">_log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">n_missing</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">elev</span><span class="p">)</span><span class="si">}</span><span class="s2"> points missing elevation (interpolated).&quot;</span><span class="p">)</span>
+        <span class="n">hill_preds</span><span class="p">,</span> <span class="n">hill_conf</span><span class="p">,</span> <span class="n">grade</span><span class="p">,</span> <span class="n">elev_sm</span> <span class="o">=</span> <span class="n">compute_hills</span><span class="p">(</span><span class="n">elev</span><span class="p">,</span> <span class="n">cum</span><span class="p">)</span>
+        <span class="n">gain</span><span class="p">,</span> <span class="n">loss</span> <span class="o">=</span> <span class="n">elevation_gain_loss</span><span class="p">(</span><span class="n">elev_sm</span><span class="p">)</span>
+        <span class="n">_log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Hills flat/up/down: </span><span class="si">{</span><span class="n">np</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">hill_preds</span><span class="p">,</span><span class="w"> </span><span class="n">minlength</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span><span class="si">}</span><span class="s2">  &quot;</span>
+             <span class="sa">f</span><span class="s2">&quot;(+</span><span class="si">{</span><span class="n">gain</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">/-</span><span class="si">{</span><span class="n">loss</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> m)&quot;</span><span class="p">)</span>
+
+        <span class="n">df_full</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span><span class="n">csv_path</span><span class="p">,</span> <span class="n">sep</span><span class="o">=</span><span class="s2">&quot;;&quot;</span><span class="p">,</span> <span class="n">quotechar</span><span class="o">=</span><span class="s1">&#39;&quot;&#39;</span><span class="p">)</span>
+        <span class="n">df_full</span><span class="o">.</span><span class="n">columns</span> <span class="o">=</span> <span class="n">df_full</span><span class="o">.</span><span class="n">columns</span><span class="o">.</span><span class="n">str</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">str</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="n">df_full</span><span class="p">[</span><span class="s1">&#39;seconds&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">to_numeric</span><span class="p">(</span><span class="n">df_full</span><span class="p">[</span><span class="s1">&#39;seconds&#39;</span><span class="p">],</span> <span class="n">errors</span><span class="o">=</span><span class="s1">&#39;coerce&#39;</span><span class="p">)</span>
+
+        <span class="n">dist_km</span>  <span class="o">=</span> <span class="n">cum</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">/</span> <span class="mf">1000.0</span>
+        <span class="n">fuel_l</span>   <span class="o">=</span> <span class="n">_extract_fuel_l</span><span class="p">(</span><span class="n">df_full</span><span class="p">,</span> <span class="n">dist_km</span><span class="p">)</span>
+        <span class="n">avg_l100</span> <span class="o">=</span> <span class="p">(</span><span class="n">fuel_l</span> <span class="o">/</span> <span class="n">dist_km</span> <span class="o">*</span> <span class="mf">100.0</span><span class="p">)</span> <span class="k">if</span> <span class="n">dist_km</span> <span class="o">&gt;</span> <span class="n">_MIN_DIST_KM_FOR_AVG</span> <span class="k">else</span> <span class="mf">0.0</span>
+        <span class="n">fuel_rate</span> <span class="o">=</span> <span class="n">_fuel_rate_per_point</span><span class="p">(</span><span class="n">df_full</span><span class="p">,</span> <span class="n">ts</span><span class="p">,</span> <span class="n">fuel_l</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">DriveData</span><span class="p">(</span>
+            <span class="n">gps_timestamps</span><span class="o">=</span><span class="n">ts</span><span class="p">,</span>
+            <span class="n">gps_lat</span><span class="o">=</span><span class="n">lat</span><span class="p">,</span>
+            <span class="n">gps_lon</span><span class="o">=</span><span class="n">lon</span><span class="p">,</span>
+            <span class="n">gps_speed</span><span class="o">=</span><span class="n">speed</span><span class="p">,</span>
+            <span class="n">gps_heading</span><span class="o">=</span><span class="n">heading</span><span class="p">,</span>
+            <span class="n">cum_distance_m</span><span class="o">=</span><span class="n">cum</span><span class="p">,</span>
+            <span class="n">elevation_m</span><span class="o">=</span><span class="n">elev</span><span class="p">,</span>
+            <span class="n">elevation_sm</span><span class="o">=</span><span class="n">elev_sm</span><span class="p">,</span>
+            <span class="n">grade_pct</span><span class="o">=</span><span class="n">grade</span><span class="p">,</span>
+            <span class="n">turn_preds</span><span class="o">=</span><span class="n">turn_preds</span><span class="p">,</span>
+            <span class="n">hill_preds</span><span class="o">=</span><span class="n">hill_preds</span><span class="p">,</span>
+            <span class="n">turn_conf</span><span class="o">=</span><span class="n">turn_conf</span><span class="p">,</span>
+            <span class="n">hill_conf</span><span class="o">=</span><span class="n">hill_conf</span><span class="p">,</span>
+            <span class="n">turn_rate</span><span class="o">=</span><span class="n">turn_rate</span><span class="p">,</span>
+            <span class="n">gps_file</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">csv_path</span><span class="p">),</span>
+            <span class="n">drive_name</span><span class="o">=</span><span class="n">csv_path</span><span class="o">.</span><span class="n">stem</span><span class="p">,</span>
+            <span class="n">drive_duration_sec</span><span class="o">=</span><span class="nb">float</span><span class="p">(</span><span class="n">ts</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">ts</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span>
+            <span class="n">drive_distance_km</span><span class="o">=</span><span class="n">cum</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">/</span> <span class="mf">1000.0</span><span class="p">,</span>
+            <span class="n">elevation_gain_m</span><span class="o">=</span><span class="n">gain</span><span class="p">,</span>
+            <span class="n">elevation_loss_m</span><span class="o">=</span><span class="n">loss</span><span class="p">,</span>
+            <span class="n">elevation_source</span><span class="o">=</span><span class="n">source</span><span class="p">,</span>
+            <span class="n">avg_fuel_l100km</span><span class="o">=</span><span class="n">avg_l100</span><span class="p">,</span>
+            <span class="n">fuel_consumption_l</span><span class="o">=</span><span class="n">fuel_l</span><span class="p">,</span>
+            <span class="n">fuel_rate_l_s</span><span class="o">=</span><span class="n">fuel_rate</span><span class="p">,</span>
+        <span class="p">)</span></div>
+
+
+    <span class="c1"># ── File discovery ──────────────────────────────────────────────────────</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_find_csv</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+        <span class="n">csvs</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">drive_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">&quot;*.csv&quot;</span><span class="p">))</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">csvs</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;No .csv file found in </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">drive_dir</span><span class="si">}</span><span class="s2">.</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="s2">&quot;The folder must contain a GPS/OBD2 .csv log.&quot;</span>
+            <span class="p">)</span>
+        <span class="k">return</span> <span class="n">csvs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="c1"># ── GPS loading ───────────────────────────────────────────────────────--</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_load_gps</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">csv_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Reduce the raw OBD2 CSV to one GPS fix per second and a heading trace.</span>
+
+<span class="sd">        The CSV repeats every PID for every poll, so this collapses each</span>
+<span class="sd">        second to its first lat/lon reading, drops rows sitting on the</span>
+<span class="sd">        same rounded coordinate as the previous one (parked/stationary),</span>
+<span class="sd">        and derives speed and heading from what&#39;s left.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span><span class="n">csv_path</span><span class="p">,</span> <span class="n">sep</span><span class="o">=</span><span class="s2">&quot;;&quot;</span><span class="p">,</span> <span class="n">quotechar</span><span class="o">=</span><span class="s1">&#39;&quot;&#39;</span><span class="p">)</span>
+        <span class="n">df</span><span class="o">.</span><span class="n">columns</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">columns</span><span class="o">.</span><span class="n">str</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">str</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+
+        <span class="n">df</span><span class="p">[</span><span class="s2">&quot;latitude&quot;</span><span class="p">]</span>   <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">to_numeric</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s2">&quot;latitude&quot;</span><span class="p">],</span>   <span class="n">errors</span><span class="o">=</span><span class="s2">&quot;coerce&quot;</span><span class="p">)</span>
+        <span class="n">df</span><span class="p">[</span><span class="s2">&quot;longtitude&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">to_numeric</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s2">&quot;longtitude&quot;</span><span class="p">],</span> <span class="n">errors</span><span class="o">=</span><span class="s2">&quot;coerce&quot;</span><span class="p">)</span>
+        <span class="n">df</span><span class="p">[</span><span class="s2">&quot;seconds&quot;</span><span class="p">]</span>    <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">to_numeric</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s2">&quot;seconds&quot;</span><span class="p">],</span>    <span class="n">errors</span><span class="o">=</span><span class="s2">&quot;coerce&quot;</span><span class="p">)</span>
+
+        <span class="n">df</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">dropna</span><span class="p">(</span><span class="n">subset</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;seconds&quot;</span><span class="p">,</span> <span class="s2">&quot;latitude&quot;</span><span class="p">,</span> <span class="s2">&quot;longtitude&quot;</span><span class="p">])</span>
+        <span class="n">df</span> <span class="o">=</span> <span class="n">df</span><span class="p">[(</span><span class="n">df</span><span class="p">[</span><span class="s2">&quot;latitude&quot;</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s2">&quot;longtitude&quot;</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">)]</span>
+        <span class="n">df</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">sort_values</span><span class="p">(</span><span class="s2">&quot;seconds&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">reset_index</span><span class="p">(</span><span class="n">drop</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="c1"># One GPS position per timestamp (OBD2 CSV repeats many PIDs per second)</span>
+        <span class="n">gps_df</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">df</span><span class="o">.</span><span class="n">groupby</span><span class="p">(</span><span class="s2">&quot;seconds&quot;</span><span class="p">,</span> <span class="n">sort</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+              <span class="o">.</span><span class="n">first</span><span class="p">()</span>
+              <span class="o">.</span><span class="n">reset_index</span><span class="p">()[[</span><span class="s2">&quot;seconds&quot;</span><span class="p">,</span> <span class="s2">&quot;latitude&quot;</span><span class="p">,</span> <span class="s2">&quot;longtitude&quot;</span><span class="p">]]</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Drop stationary clusters</span>
+        <span class="n">lat_r</span> <span class="o">=</span> <span class="n">gps_df</span><span class="p">[</span><span class="s2">&quot;latitude&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="mi">6</span><span class="p">)</span>
+        <span class="n">lon_r</span> <span class="o">=</span> <span class="n">gps_df</span><span class="p">[</span><span class="s2">&quot;longtitude&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="mi">6</span><span class="p">)</span>
+        <span class="n">gps_df</span> <span class="o">=</span> <span class="n">gps_df</span><span class="p">[(</span><span class="n">lat_r</span> <span class="o">!=</span> <span class="n">lat_r</span><span class="o">.</span><span class="n">shift</span><span class="p">())</span> <span class="o">|</span> <span class="p">(</span><span class="n">lon_r</span> <span class="o">!=</span> <span class="n">lon_r</span><span class="o">.</span><span class="n">shift</span><span class="p">())]</span><span class="o">.</span><span class="n">reset_index</span><span class="p">(</span><span class="n">drop</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">gps_df</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Not enough GPS movement data in the CSV.&quot;</span><span class="p">)</span>
+
+        <span class="n">ts</span>  <span class="o">=</span> <span class="n">gps_df</span><span class="p">[</span><span class="s2">&quot;seconds&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="n">lat</span> <span class="o">=</span> <span class="n">gps_df</span><span class="p">[</span><span class="s2">&quot;latitude&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="n">lon</span> <span class="o">=</span> <span class="n">gps_df</span><span class="p">[</span><span class="s2">&quot;longtitude&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+        <span class="n">speed_df</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="n">df</span><span class="p">[</span><span class="s2">&quot;pid&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">str</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">isin</span><span class="p">([</span><span class="s2">&quot;Speed (GPS)&quot;</span><span class="p">,</span> <span class="s2">&quot;Vehicle speed&quot;</span><span class="p">])]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+        <span class="n">speed</span>    <span class="o">=</span> <span class="n">_align_speed</span><span class="p">(</span><span class="n">speed_df</span><span class="p">,</span> <span class="n">ts</span><span class="p">)</span>
+        <span class="n">heading</span>  <span class="o">=</span> <span class="n">_compute_heading</span><span class="p">(</span><span class="n">lat</span><span class="p">,</span> <span class="n">lon</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">ts</span><span class="p">,</span> <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span><span class="p">,</span> <span class="n">speed</span><span class="p">,</span> <span class="n">heading</span></div>
+
+
+
+<span class="c1"># ── Helpers ───────────────────────────────────────────────────────────────--</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_align_speed</span><span class="p">(</span><span class="n">speed_df</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span> <span class="n">timestamps</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">speed_df</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">timestamps</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="n">speed_df</span> <span class="o">=</span> <span class="n">speed_df</span><span class="o">.</span><span class="n">sort_values</span><span class="p">(</span><span class="s2">&quot;seconds&quot;</span><span class="p">)</span>
+    <span class="n">sp_ts</span>  <span class="o">=</span> <span class="n">speed_df</span><span class="p">[</span><span class="s2">&quot;seconds&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="n">sp_val</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">to_numeric</span><span class="p">(</span><span class="n">speed_df</span><span class="p">[</span><span class="s2">&quot;value&quot;</span><span class="p">],</span> <span class="n">errors</span><span class="o">=</span><span class="s2">&quot;coerce&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">interp</span><span class="p">(</span><span class="n">timestamps</span><span class="p">,</span> <span class="n">sp_ts</span><span class="p">,</span> <span class="n">sp_val</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_compute_heading</span><span class="p">(</span><span class="n">lat</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">lon</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute initial bearing (0-360°) between consecutive GPS points.</span>
+
+<span class="sd">    Point 0 is given the same heading as point 1 since there&#39;s no</span>
+<span class="sd">    previous point to compute a bearing from.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">heading</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">lat</span><span class="p">))</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">lat</span><span class="p">)):</span>
+        <span class="n">dlon</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="n">lon</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">-</span> <span class="n">lon</span><span class="p">[</span><span class="n">i</span> <span class="o">-</span> <span class="mi">1</span><span class="p">])</span>
+        <span class="n">lat1</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="n">lat</span><span class="p">[</span><span class="n">i</span> <span class="o">-</span> <span class="mi">1</span><span class="p">])</span>
+        <span class="n">lat2</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="n">lat</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">dlon</span><span class="p">)</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">lat2</span><span class="p">)</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">lat1</span><span class="p">)</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">lat2</span><span class="p">)</span> <span class="o">-</span>
+             <span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">lat1</span><span class="p">)</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">lat2</span><span class="p">)</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">dlon</span><span class="p">))</span>
+        <span class="n">heading</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">degrees</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">atan2</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">))</span> <span class="o">+</span> <span class="mi">360</span><span class="p">)</span> <span class="o">%</span> <span class="mi">360</span>
+    <span class="n">heading</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">heading</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">heading</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="k">else</span> <span class="mf">0.0</span>
+    <span class="k">return</span> <span class="n">heading</span>
+
+
+<span class="n">_FALLBACK_FUEL_L100KM</span> <span class="o">=</span> <span class="mf">8.0</span>
+<span class="n">_MIN_DIST_KM_FOR_AVG</span>  <span class="o">=</span> <span class="mf">0.1</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_extract_fuel_l</span><span class="p">(</span><span class="n">df</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span> <span class="n">distance_km</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Total fuel burned over the drive, in litres.</span>
+
+<span class="sd">    Tries three sources in order: a direct &#39;Fuel used&#39; PID (difference of</span>
+<span class="sd">    last and first reading), trapezoidal integration of an instant fuel</span>
+<span class="sd">    rate PID, and finally a fixed L/100km estimate if neither PID is</span>
+<span class="sd">    present in the CSV.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="s1">&#39;pid&#39;</span> <span class="ow">in</span> <span class="n">df</span><span class="o">.</span><span class="n">columns</span><span class="p">:</span>
+        <span class="n">pid_col</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;pid&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">str</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+
+        <span class="c1"># 1. priority: &#39;Fuel used&#39; PID — direct litre measurement</span>
+        <span class="n">fuel_used_df</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="n">pid_col</span> <span class="o">==</span> <span class="s1">&#39;Fuel used&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">fuel_used_df</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+            <span class="n">vals</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">to_numeric</span><span class="p">(</span><span class="n">fuel_used_df</span><span class="p">[</span><span class="s1">&#39;value&#39;</span><span class="p">],</span> <span class="n">errors</span><span class="o">=</span><span class="s1">&#39;coerce&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">dropna</span><span class="p">()</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">vals</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mi">2</span><span class="p">:</span>
+                <span class="n">total</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">vals</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span> <span class="o">-</span> <span class="nb">float</span><span class="p">(</span><span class="n">vals</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+                <span class="k">if</span> <span class="n">total</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[AutoDNA] Fuel: read from &#39;Fuel used&#39; PID: </span><span class="si">{</span><span class="n">total</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> L&quot;</span><span class="p">)</span>
+                    <span class="k">return</span> <span class="n">total</span>
+
+        <span class="c1"># 2. priority: instant fuel rate — trapezoid integration</span>
+        <span class="k">for</span> <span class="n">pid_name</span> <span class="ow">in</span> <span class="p">(</span><span class="s1">&#39;Calculated instant fuel rate&#39;</span><span class="p">,</span> <span class="s1">&#39;engine fuel rate&#39;</span><span class="p">):</span>
+            <span class="n">rate_df</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="n">pid_col</span><span class="o">.</span><span class="n">str</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">==</span> <span class="n">pid_name</span><span class="o">.</span><span class="n">lower</span><span class="p">()]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">rate_df</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+                <span class="n">rate_df</span> <span class="o">=</span> <span class="n">rate_df</span><span class="o">.</span><span class="n">sort_values</span><span class="p">(</span><span class="s1">&#39;seconds&#39;</span><span class="p">)</span>
+                <span class="n">ts</span>  <span class="o">=</span> <span class="n">rate_df</span><span class="p">[</span><span class="s1">&#39;seconds&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+                <span class="n">val</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">to_numeric</span><span class="p">(</span><span class="n">rate_df</span><span class="p">[</span><span class="s1">&#39;value&#39;</span><span class="p">],</span> <span class="n">errors</span><span class="o">=</span><span class="s1">&#39;coerce&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+                <span class="n">dt_h</span>  <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="n">ts</span><span class="p">)</span> <span class="o">/</span> <span class="mf">3600.0</span>
+                <span class="n">total</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(((</span><span class="n">val</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="n">val</span><span class="p">[</span><span class="mi">1</span><span class="p">:])</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">)</span> <span class="o">*</span> <span class="n">dt_h</span><span class="p">))</span>
+                <span class="k">if</span> <span class="n">total</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[AutoDNA] Fuel: trapz integration of </span><span class="si">{</span><span class="n">pid_name</span><span class="si">!r}</span><span class="s2">: </span><span class="si">{</span><span class="n">total</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> L&quot;</span><span class="p">)</span>
+                    <span class="k">return</span> <span class="n">total</span>
+
+    <span class="c1"># 3. fallback estimate</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[AutoDNA] Fuel: no PID data — estimating at </span><span class="si">{</span><span class="n">_FALLBACK_FUEL_L100KM</span><span class="si">}</span><span class="s2"> L/100km&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">distance_km</span> <span class="o">*</span> <span class="n">_FALLBACK_FUEL_L100KM</span> <span class="o">/</span> <span class="mf">100.0</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_fuel_rate_per_point</span><span class="p">(</span><span class="n">df</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span> <span class="n">ts</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">total_fuel_l</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Instant fuel rate (L/s) sampled at each GPS timestamp, for per-segment</span>
+<span class="sd">    consumption. Prefers the OBD2 instant-rate PID; otherwise spreads the</span>
+<span class="sd">    drive&#39;s total fuel uniformly over its duration (flat rate).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">ts</span><span class="p">)</span>
+    <span class="k">if</span> <span class="s1">&#39;pid&#39;</span> <span class="ow">in</span> <span class="n">df</span><span class="o">.</span><span class="n">columns</span><span class="p">:</span>
+        <span class="n">pid</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;pid&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">str</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="p">(</span><span class="s1">&#39;Calculated instant fuel rate&#39;</span><span class="p">,</span> <span class="s1">&#39;engine fuel rate&#39;</span><span class="p">):</span>
+            <span class="n">r</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="n">pid</span><span class="o">.</span><span class="n">str</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">==</span> <span class="n">name</span><span class="o">.</span><span class="n">lower</span><span class="p">()]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">r</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+                <span class="n">r</span> <span class="o">=</span> <span class="n">r</span><span class="o">.</span><span class="n">sort_values</span><span class="p">(</span><span class="s1">&#39;seconds&#39;</span><span class="p">)</span>
+                <span class="n">rt</span> <span class="o">=</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;seconds&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+                <span class="n">rv</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">to_numeric</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;value&#39;</span><span class="p">],</span> <span class="n">errors</span><span class="o">=</span><span class="s1">&#39;coerce&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">rt</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mi">2</span> <span class="ow">and</span> <span class="n">np</span><span class="o">.</span><span class="n">ptp</span><span class="p">(</span><span class="n">rt</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">lph</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">interp</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">rt</span><span class="p">,</span> <span class="n">rv</span><span class="p">)</span>          <span class="c1"># L/h at each GPS point</span>
+                    <span class="k">return</span> <span class="p">(</span><span class="n">lph</span> <span class="o">/</span> <span class="mf">3600.0</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>  <span class="c1"># → L/s</span>
+
+    <span class="c1"># fallback: uniform rate so segments are at least comparable within a drive</span>
+    <span class="n">span</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">ts</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">ts</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="k">if</span> <span class="n">n</span> <span class="o">&gt;=</span> <span class="mi">2</span> <span class="k">else</span> <span class="mf">0.0</span>
+    <span class="n">flat</span> <span class="o">=</span> <span class="p">(</span><span class="n">total_fuel_l</span> <span class="o">/</span> <span class="n">span</span><span class="p">)</span> <span class="k">if</span> <span class="n">span</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">flat</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../index.html">AutoDNA</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules.html">App Modules</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2026, AutoDNA Project.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.1.0</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>
