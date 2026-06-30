@@ -1,225 +1,279 @@
+"""Parses a drive folder's GPS/OBD2 CSV into a :class:`DriveData` object.
+
+Everything here is derived from the CSV alone — no IMU, no ML:
+
+* Turns are detected from GPS heading change (:func:`app.gps_analysis.compute_turns`).
+* Hills are detected from DEM ground-elevation grade (:func:`app.gps_analysis.compute_hills`).
+
+The device's own GPS altitude column is intentionally ignored — elevation is
+looked up from a DEM (online EU-DEM 25 m, Copernicus GLO-90 fallback) via
+:mod:`app.elevation`.
+"""
+
+from __future__ import annotations
+
 import math
+from dataclasses import dataclass, field
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from dataclasses import dataclass
 
-#ocena porabe goriva ce obd2 pid 'engine fuel rate' ni na voljo
-_FALLBACK_FUEL_L100KM = 8.0
-
-#prag gps vrzeli: manjse vrzeli se linearno interpolirajo, vecje ponavljajo zadnjo pozicijo
-_GPS_GAP_THRESHOLD_S = 10.0
-
-#korak pri vstavljanju vmesnih tock v vrzeli (1 hz)
-_GPS_INTERP_STEP_S = 1.0
-
-#minimalna razdalja v km za izracun povprecne porabe (izogib deljenju z niclo)
-_MIN_DIST_KM_FOR_AVG = 0.1
+from AutoDNA.app.elevation import ElevationProvider, get_default_provider
+from AutoDNA.app.gps_analysis import (
+    cumulative_distance,
+    compute_turns,
+    compute_hills,
+    elevation_gain_loss,
+)
 
 
 @dataclass
 class DriveData:
-    """Complete drive session from GPS/OBD2 CSV."""
+    """A complete drive session, fully derived from GPS + DEM."""
 
-    #gps sled - deduplicirane tocke med katerimi se vozilo premika
-    gps_timestamps: np.ndarray  # (N,) absolutni casi v sekundah
-    gps_lat: np.ndarray  # (N,)
-    gps_lon: np.ndarray  # (N,)
-    gps_speed: np.ndarray  # (N,) km/h
-    gps_heading: np.ndarray  # (N,) smerni kot 0-360 stopinj
-    gps_altitude: np.ndarray  # (N,) metri nadmorske visine; nicle ce pid ni na voljo
+    # GPS track (deduplicated, movement-filtered)
+    gps_timestamps: np.ndarray   # (N,)  seconds from start (0-indexed)
+    gps_lat:        np.ndarray   # (N,)
+    gps_lon:        np.ndarray   # (N,)
+    gps_speed:      np.ndarray   # (N,)  km/h
+    gps_heading:    np.ndarray   # (N,)  degrees 0-360
+    cum_distance_m: np.ndarray   # (N,)  cumulative metres
 
-    #poraba goriva - iz pid 'engine fuel rate' ali ocena 8 l/100km
-    fuel_consumption_l: float
-    avg_fuel_l100km: float
+    # Elevation / grade (from DEM, NOT device altitude)
+    elevation_m:    np.ndarray   # (N,)  raw DEM elevation
+    elevation_sm:   np.ndarray   # (N,)  smoothed elevation used for grades
+    grade_pct:      np.ndarray   # (N,)  signed road grade %
 
-    #metapodatki o voznji
-    gps_file: str
-    drive_name: str
+    # Per-point event classes (one element per GPS point)
+    turn_preds:     np.ndarray   # (N,) int32  0=straight 1=left 2=right
+    hill_preds:     np.ndarray   # (N,) int32  0=flat 1=uphill 2=downhill
+    turn_conf:      np.ndarray   # (N,) float  0..1
+    hill_conf:      np.ndarray   # (N,) float  0..1
+    turn_rate:      np.ndarray   # (N,) float  signed heading change (deg)
+
+    # Metadata
+    gps_file:           str
+    drive_name:         str
     drive_duration_sec: float
-    drive_distance_km: float
+    drive_distance_km:  float
+    elevation_gain_m:   float
+    elevation_loss_m:   float
+    elevation_source:   str
+    avg_fuel_l100km: float
+    fuel_consumption_l: float
+    fuel_rate_l_s:   np.ndarray   # (N,)  instant fuel rate per GPS point (L/s)
+
+    # ── Per-segment fuel records (filled by segment_records.evaluate_drive) ──
+    turn_perf:         np.ndarray | None = None  # (N,) 0=none 1=record 2=close 3=worse
+    hill_perf:         np.ndarray | None = None  # (N,) 0=none 1=record 2=close 3=worse
+    total_savings_l:   float = 0.0               # potential fuel saved vs records
+    savings_breakdown: list = field(default_factory=list)  # per-segment detail dicts
+    vehicle:           str = "default"
+
+    @property
+    def n_points(self) -> int:
+        return len(self.gps_lat)
 
 
 class DriveDataLoader:
     """
-    Open a drive directory containing a GPS/OBD2 .csv file.
-    Returns a DriveData instance built purely from GPS data.
+    Open a drive directory containing a GPS/OBD2 `.csv` and produce DriveData.
+
+    A `.BIN` (IMU) file may also be present but is ignored — the IMU pipeline
+    now lives outside the app.
     """
 
-    def __init__(self, drive_dir: Path):
+    def __init__(self, drive_dir: Path, provider: ElevationProvider | None = None):
         self.drive_dir = Path(drive_dir)
+        self.provider = provider or get_default_provider()
 
-    def load_drive(self) -> DriveData:
+    def load_drive(self, progress_cb=None) -> DriveData:
+        """Parse the drive's CSV and run turn/hill detection on it.
+
+        Args:
+            progress_cb: Optional callable invoked with a short status
+                string at each stage (CSV parsing, elevation lookup,
+                detection), used by the UI to update the status bar.
+
+        Returns:
+            DriveData: The fully populated drive, ready for display and
+            for :func:`app.segment_records.evaluate_drive`.
+
+        Raises:
+            FileNotFoundError: No ``.csv`` file exists in ``drive_dir``.
+            ValueError: The CSV has fewer than two distinct GPS fixes.
+        """
+        def _log(msg):
+            print(f"[AutoDNA] {msg}")
+            if progress_cb:
+                progress_cb(msg)
+
         csv_path = self._find_csv()
 
-        print(f"[AutoDNA] GPS : {csv_path}")
-        gps_ts, gps_lat, gps_lon, gps_speed, gps_heading, gps_altitude, fuel_l = self._load_gps(csv_path)
-        print(f"[AutoDNA] GPS : {len(gps_lat)} points  span {float(gps_ts[-1] - gps_ts[0]):.1f}s")
+        # ── GPS track ────────────────────────────────────────────────────────
+        _log(f"Loading GPS: {csv_path.name}")
+        ts, lat, lon, speed, heading = self._load_gps(csv_path)
+        cum = cumulative_distance(lat, lon)
+        _log(f"{len(lat)} GPS points, {cum[-1]:.0f} m")
 
-        dist_km  = _haversine_total(gps_lat, gps_lon)
+        # ── Turns (heading) ──────────────────────────────────────────────────
+        turn_preds, turn_conf, turn_rate = compute_turns(heading, cum)
+        _log(f"Turns straight/left/right: {np.bincount(turn_preds, minlength=3).tolist()}")
+
+        # ── Hills (DEM grade) ────────────────────────────────────────────────
+        _log(f"Looking up elevation via {self.provider.name}…")
+        elev = self.provider.elevations(lat, lon)
+        n_missing = int(np.isnan(elev).sum())
+        if n_missing == len(elev):
+            _log("Elevation unavailable (offline?) — hills disabled for this drive.")
+            source = f"{self.provider.name} (unavailable)"
+        else:
+            source = self.provider.name
+            if n_missing:
+                _log(f"{n_missing}/{len(elev)} points missing elevation (interpolated).")
+        hill_preds, hill_conf, grade, elev_sm = compute_hills(elev, cum)
+        gain, loss = elevation_gain_loss(elev_sm)
+        _log(f"Hills flat/up/down: {np.bincount(hill_preds, minlength=3).tolist()}  "
+             f"(+{gain:.0f}/-{loss:.0f} m)")
+
+        df_full = pd.read_csv(csv_path, sep=";", quotechar='"')
+        df_full.columns = df_full.columns.str.lower().str.strip()
+        df_full['seconds'] = pd.to_numeric(df_full['seconds'], errors='coerce')
+
+        dist_km  = cum[-1] / 1000.0
+        fuel_l   = _extract_fuel_l(df_full, dist_km)
         avg_l100 = (fuel_l / dist_km * 100.0) if dist_km > _MIN_DIST_KM_FOR_AVG else 0.0
+        fuel_rate = _fuel_rate_per_point(df_full, ts, fuel_l)
 
         return DriveData(
-            gps_timestamps=gps_ts,
-            gps_lat=gps_lat,
-            gps_lon=gps_lon,
-            gps_speed=gps_speed,
-            gps_heading=gps_heading,
-            gps_altitude=gps_altitude,
-            fuel_consumption_l=fuel_l,
-            avg_fuel_l100km=avg_l100,
+            gps_timestamps=ts,
+            gps_lat=lat,
+            gps_lon=lon,
+            gps_speed=speed,
+            gps_heading=heading,
+            cum_distance_m=cum,
+            elevation_m=elev,
+            elevation_sm=elev_sm,
+            grade_pct=grade,
+            turn_preds=turn_preds,
+            hill_preds=hill_preds,
+            turn_conf=turn_conf,
+            hill_conf=hill_conf,
+            turn_rate=turn_rate,
             gps_file=str(csv_path),
             drive_name=csv_path.stem,
-            drive_duration_sec=float(gps_ts[-1] - gps_ts[0]),
-            drive_distance_km=dist_km,
+            drive_duration_sec=float(ts[-1] - ts[0]),
+            drive_distance_km=cum[-1] / 1000.0,
+            elevation_gain_m=gain,
+            elevation_loss_m=loss,
+            elevation_source=source,
+            avg_fuel_l100km=avg_l100,
+            fuel_consumption_l=fuel_l,
+            fuel_rate_l_s=fuel_rate,
         )
 
+    # ── File discovery ──────────────────────────────────────────────────────
     def _find_csv(self) -> Path:
-        #poisci csv datoteko gps/obd2 posnetka v mapi voznje
-        csvs = sorted(self.drive_dir.glob('*.csv'))
+        csvs = sorted(self.drive_dir.glob("*.csv"))
         if not csvs:
             raise FileNotFoundError(
                 f"No .csv file found in {self.drive_dir}.\n"
-                "The folder must contain a .csv file (GPS/OBD2 log)."
+                "The folder must contain a GPS/OBD2 .csv log."
             )
-        if len(csvs) > 1:
-            print(f"[AutoDNA] Multiple CSV files found — using first: {csvs[0].name}")
-            for c in csvs[1:]:
-                print(f"          skipping: {c.name}")
         return csvs[0]
 
-    # ── GPS loading ───────────────────────────────────────────────────────────
+    # ── GPS loading ───────────────────────────────────────────────────────--
     def _load_gps(self, csv_path: Path):
-        #najprej poskusi s podpicjem (obd2 privzeto), ce ne uspe uporabi vejico
-        try:
-            df = pd.read_csv(csv_path, sep=';', quotechar='"')
-            if df.shape[1] < 3:
-                raise ValueError("too few columns with ';' separator")
-        except Exception:
-            df = pd.read_csv(csv_path, sep=',', quotechar='"')
+        """Reduce the raw OBD2 CSV to one GPS fix per second and a heading trace.
 
-        #normaliziraj imena stolpcev - odstrani presledke in velika zacetnice
+        The CSV repeats every PID for every poll, so this collapses each
+        second to its first lat/lon reading, drops rows sitting on the
+        same rounded coordinate as the previous one (parked/stationary),
+        and derives speed and heading from what's left.
+        """
+        df = pd.read_csv(csv_path, sep=";", quotechar='"')
         df.columns = df.columns.str.lower().str.strip()
 
-        #sprejmi obe obliki: longitude (pravilno) in longtitude (napaka obd2)
-        lon_col = None
-        for candidate in ('longitude', 'longtitude', 'lon'):
-            if candidate in df.columns:
-                lon_col = candidate
-                break
-        if lon_col is None:
-            raise ValueError(
-                f"No longitude column found in {csv_path.name}. "
-                f"Columns present: {list(df.columns)}"
-            )
-        if lon_col != 'longtitude':
-            df = df.rename(columns={lon_col: 'longtitude'})
+        df["latitude"]   = pd.to_numeric(df["latitude"],   errors="coerce")
+        df["longtitude"] = pd.to_numeric(df["longtitude"], errors="coerce")
+        df["seconds"]    = pd.to_numeric(df["seconds"],    errors="coerce")
 
-        #pretvori stolpce v stevila - napacne vrednosti postanejo nan
-        df['latitude']   = pd.to_numeric(df['latitude'],   errors='coerce')
-        df['longtitude'] = pd.to_numeric(df['longtitude'], errors='coerce')
-        df['seconds']    = pd.to_numeric(df['seconds'],    errors='coerce')
+        df = df.dropna(subset=["seconds", "latitude", "longtitude"])
+        df = df[(df["latitude"] != 0) & (df["longtitude"] != 0)]
+        df = df.sort_values("seconds").reset_index(drop=True)
 
-        #pocisti vrstice brez koordinat ali z niclo (neveljaven gps fix)
-        df = df.dropna(subset=['seconds', 'latitude', 'longtitude'])
-        df = df[(df['latitude'] != 0) & (df['longtitude'] != 0)]
-        df = df.sort_values('seconds').reset_index(drop=True)
-
-        if df.empty:
-            raise ValueError(
-                f"No valid GPS rows in {csv_path.name}. "
-                "Check that latitude/longitude/seconds columns contain real values."
-            )
-
-        #ena gps tocka na casovno oznako - obd2 csv ima vec pid vrstic na cas
+        # One GPS position per timestamp (OBD2 CSV repeats many PIDs per second)
         gps_df = (
-            df.groupby('seconds', sort=True)
+            df.groupby("seconds", sort=True)
               .first()
-              .reset_index()[['seconds', 'latitude', 'longtitude']]
+              .reset_index()[["seconds", "latitude", "longtitude"]]
         )
 
-        #odstrani stacionarne tocke - enaka pozicija na 6 decimalnih mest (~0.1m)
-        lat_r = gps_df['latitude'].round(6)
-        lon_r = gps_df['longtitude'].round(6)
+        # Drop stationary clusters
+        lat_r = gps_df["latitude"].round(6)
+        lon_r = gps_df["longtitude"].round(6)
         gps_df = gps_df[(lat_r != lat_r.shift()) | (lon_r != lon_r.shift())].reset_index(drop=True)
 
         if len(gps_df) < 2:
             raise ValueError("Not enough GPS movement data in the CSV.")
 
-        #pretvori v numpy polja za hitro vektorizirano racunanje
-        ts  = gps_df['seconds'].values.astype(np.float64)
-        lat = gps_df['latitude'].values.astype(np.float64)
-        lon = gps_df['longtitude'].values.astype(np.float64)
+        ts  = gps_df["seconds"].values.astype(np.float64)
+        lat = gps_df["latitude"].values.astype(np.float64)
+        lon = gps_df["longtitude"].values.astype(np.float64)
 
-        #hitrost je neobvezna - prazna ce csv nima pid stolpca ali ustreznih vrednosti
-        speed_df = pd.DataFrame()
-        altitude_df = pd.DataFrame()
-        if 'pid' in df.columns:
-            speed_df    = df[df['pid'].str.strip().isin(['Speed (GPS)', 'Vehicle speed'])].copy()
-            altitude_df = df[df['pid'].str.strip() == 'Altitude (GPS)'].copy()
+        speed_df = df[df["pid"].str.strip().isin(["Speed (GPS)", "Vehicle speed"])].copy()
         speed    = _align_speed(speed_df, ts)
-        altitude = _align_speed(altitude_df, ts)   # same interpolation, reuse helper
-        #smerni kot med zaporednimi gps tockami - potreben za preverjanje l/r oznak
         heading  = _compute_heading(lat, lon)
 
-        gps_dur_s = float(ts[-1] - ts[0])
-        if gps_dur_s > 0 and len(ts) < gps_dur_s:
-            #gps je redek - vstavi vmesne tocke pri 1 hz
-            ts_i: list[float] = []
-            lat_i: list[float] = []
-            lon_i: list[float] = []
-            for k in range(len(ts) - 1):
-                gap = float(ts[k + 1] - ts[k])
-                ts_i.append(float(ts[k]))
-                lat_i.append(float(lat[k]))
-                lon_i.append(float(lon[k]))
-                if _GPS_INTERP_STEP_S < gap <= _GPS_GAP_THRESHOLD_S:
-                    #majhna vrzel: linearna interpolacija (gps se pocasi posodablja)
-                    for sub_t in np.arange(ts[k] + _GPS_INTERP_STEP_S, ts[k + 1], _GPS_INTERP_STEP_S):
-                        frac = (sub_t - ts[k]) / gap
-                        ts_i.append(float(sub_t))
-                        lat_i.append(float(lat[k]) + frac * (float(lat[k + 1]) - float(lat[k])))
-                        lon_i.append(float(lon[k]) + frac * (float(lon[k + 1]) - float(lon[k])))
-                elif gap > _GPS_GAP_THRESHOLD_S:
-                    #velika vrzel (stojisce, rdeca luc): ponovi zadnjo pozicijo
-                    for sub_t in np.arange(ts[k] + _GPS_INTERP_STEP_S, ts[k + 1], _GPS_INTERP_STEP_S):
-                        ts_i.append(float(sub_t))
-                        lat_i.append(float(lat[k]))
-                        lon_i.append(float(lon[k]))
-            ts_i.append(float(ts[-1]))
-            lat_i.append(float(lat[-1]))
-            lon_i.append(float(lon[-1]))
-            ts_new = np.array(ts_i, dtype=np.float64)
-            lat_new = np.array(lat_i, dtype=np.float64)
-            lon_new = np.array(lon_i, dtype=np.float64)
-            speed    = _align_speed(speed_df,    ts_new)
-            altitude = _align_speed(altitude_df, ts_new)
-            heading  = _compute_heading(lat_new, lon_new)
-            print(f"[AutoDNA] GPS interpolated: {len(ts)} → {len(ts_new)} points"
-                  f"  ({gps_dur_s:.0f}s span  sparse={len(ts)/gps_dur_s:.2f} pts/s)")
-            ts, lat, lon = ts_new, lat_new, lon_new
-
-        if altitude.max() > 1.0:
-            print(f"[AutoDNA] GPS altitude: min={altitude.min():.1f}m  max={altitude.max():.1f}m"
-                  f"  range={altitude.max()-altitude.min():.1f}m")
-        else:
-            print("[AutoDNA] GPS altitude: not available in CSV")
-
-        #poraba goriva - iz obd2 pid ali ocena na osnovi razdalje
-        fuel_l = _extract_fuel_l(df, _haversine_total(lat, lon))
-        return ts, lat, lon, speed, heading, altitude, fuel_l
+        return ts, lat, lon, speed, heading
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────--
+def _align_speed(speed_df: pd.DataFrame, timestamps: np.ndarray) -> np.ndarray:
+    if speed_df.empty:
+        return np.zeros(len(timestamps), dtype=np.float32)
+    speed_df = speed_df.sort_values("seconds")
+    sp_ts  = speed_df["seconds"].values.astype(np.float64)
+    sp_val = pd.to_numeric(speed_df["value"], errors="coerce").fillna(0).values.astype(np.float64)
+    return np.interp(timestamps, sp_ts, sp_val).astype(np.float32)
+
+
+def _compute_heading(lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+    """Compute initial bearing (0-360°) between consecutive GPS points.
+
+    Point 0 is given the same heading as point 1 since there's no
+    previous point to compute a bearing from.
+    """
+    heading = np.zeros(len(lat))
+    for i in range(1, len(lat)):
+        dlon = math.radians(lon[i] - lon[i - 1])
+        lat1 = math.radians(lat[i - 1])
+        lat2 = math.radians(lat[i])
+        x = math.sin(dlon) * math.cos(lat2)
+        y = (math.cos(lat1) * math.sin(lat2) -
+             math.sin(lat1) * math.cos(lat2) * math.cos(dlon))
+        heading[i] = (math.degrees(math.atan2(x, y)) + 360) % 360
+    heading[0] = heading[1] if len(heading) > 1 else 0.0
+    return heading
+
+
+_FALLBACK_FUEL_L100KM = 8.0
+_MIN_DIST_KM_FOR_AVG  = 0.1
+
 
 def _extract_fuel_l(df: pd.DataFrame, distance_km: float) -> float:
-    #izvleci skupno porabo goriva iz obd2 csv datoteke
-    #poskusi vire po prednostnem vrstnem redu: neposredno merjeni litri, nato pretok, nato ocena
+    """Total fuel burned over the drive, in litres.
 
+    Tries three sources in order: a direct 'Fuel used' PID (difference of
+    last and first reading), trapezoidal integration of an instant fuel
+    rate PID, and finally a fixed L/100km estimate if neither PID is
+    present in the CSV.
+    """
     if 'pid' in df.columns:
         pid_col = df['pid'].str.strip()
 
-        #1. prioriteta: 'fuel used' v litrih - direktna meritev (zadnja - prva vrednost)
+        # 1. priority: 'Fuel used' PID — direct litre measurement
         fuel_used_df = df[pid_col == 'Fuel used'].copy()
         if not fuel_used_df.empty:
             vals = pd.to_numeric(fuel_used_df['value'], errors='coerce').dropna()
@@ -229,62 +283,44 @@ def _extract_fuel_l(df: pd.DataFrame, distance_km: float) -> float:
                     print(f"[AutoDNA] Fuel: read from 'Fuel used' PID: {total:.4f} L")
                     return total
 
-        #2. prioriteta: 'calculated instant fuel rate' ali 'engine fuel rate' (l/h) - trapezna integracija
+        # 2. priority: instant fuel rate — trapezoid integration
         for pid_name in ('Calculated instant fuel rate', 'engine fuel rate'):
             rate_df = df[pid_col.str.lower() == pid_name.lower()].copy()
             if not rate_df.empty:
                 rate_df = rate_df.sort_values('seconds')
                 ts  = rate_df['seconds'].values.astype(np.float64)
                 val = pd.to_numeric(rate_df['value'], errors='coerce').fillna(0).values.astype(np.float64)
-                dt_h = np.diff(ts) / 3600.0
+                dt_h  = np.diff(ts) / 3600.0
                 total = float(np.sum(((val[:-1] + val[1:]) / 2.0) * dt_h))
                 if total > 0:
                     print(f"[AutoDNA] Fuel: trapz integration of {pid_name!r}: {total:.4f} L")
                     return total
 
-    #3. ocena: _FALLBACK_FUEL_L100KM l/100km ce ni pid podatkov
+    # 3. fallback estimate
     print(f"[AutoDNA] Fuel: no PID data — estimating at {_FALLBACK_FUEL_L100KM} L/100km")
     return distance_km * _FALLBACK_FUEL_L100KM / 100.0
 
 
-def _align_speed(speed_df: pd.DataFrame, timestamps: np.ndarray) -> np.ndarray:
-    #interpoliraj hitrost na gps casovne oznake z linearno interpolacijo
-    #vrne nicle ce obd2 csv ne vsebuje podatkov o hitrosti
-    if speed_df.empty:
-        return np.zeros(len(timestamps), dtype=np.float32)
-    speed_df = speed_df.sort_values('seconds')
-    sp_ts  = speed_df['seconds'].values.astype(np.float64)
-    sp_val = pd.to_numeric(speed_df['value'], errors='coerce').fillna(0).values.astype(np.float64)
-    return np.interp(timestamps, sp_ts, sp_val).astype(np.float32)
+def _fuel_rate_per_point(df: pd.DataFrame, ts: np.ndarray, total_fuel_l: float) -> np.ndarray:
+    """
+    Instant fuel rate (L/s) sampled at each GPS timestamp, for per-segment
+    consumption. Prefers the OBD2 instant-rate PID; otherwise spreads the
+    drive's total fuel uniformly over its duration (flat rate).
+    """
+    n = len(ts)
+    if 'pid' in df.columns:
+        pid = df['pid'].str.strip()
+        for name in ('Calculated instant fuel rate', 'engine fuel rate'):
+            r = df[pid.str.lower() == name.lower()].copy()
+            if not r.empty:
+                r = r.sort_values('seconds')
+                rt = r['seconds'].values.astype(np.float64)
+                rv = pd.to_numeric(r['value'], errors='coerce').fillna(0).values.astype(np.float64)
+                if len(rt) >= 2 and np.ptp(rt) > 0:
+                    lph = np.interp(ts, rt, rv)          # L/h at each GPS point
+                    return (lph / 3600.0).astype(np.float32)  # → L/s
 
-
-def _compute_heading(lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
-    #izracunaj smerni kot (bearing) med zaporednimi gps tockami v stopinjah [0,360]
-    #prva tocka dobi isti kot kot druga da se izognemo nanima
-    heading = np.zeros(len(lat))
-    for i in range(1, len(lat)):
-        dlon = math.radians(lon[i] - lon[i - 1])
-        lat1 = math.radians(lat[i - 1])
-        lat2 = math.radians(lat[i])
-        #sfericna formula za smerni kot (forward azimuth)
-        x = math.sin(dlon) * math.cos(lat2)
-        y = (math.cos(lat1) * math.sin(lat2) -
-             math.sin(lat1) * math.cos(lat2) * math.cos(dlon))
-        heading[i] = (math.degrees(math.atan2(x, y)) + 360) % 360
-    heading[0] = heading[1] if len(heading) > 1 else 0.0
-    return heading
-
-
-def _haversine_total(lat: np.ndarray, lon: np.ndarray) -> float:
-    #skupna razdalja gps sledi v kilometrih - vsota haversine razdalj med zaporednimi tockami
-    R = 6371.0  #polmer zemlje v kilometrih
-    total = 0.0
-    for i in range(len(lat) - 1):
-        phi1 = math.radians(lat[i])
-        phi2 = math.radians(lat[i + 1])
-        dphi = math.radians(lat[i + 1] - lat[i])
-        dlam = math.radians(lon[i + 1] - lon[i])
-        a = (math.sin(dphi / 2) ** 2 +
-             math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2)
-        total += R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return total
+    # fallback: uniform rate so segments are at least comparable within a drive
+    span = float(ts[-1] - ts[0]) if n >= 2 else 0.0
+    flat = (total_fuel_l / span) if span > 0 else 0.0
+    return np.full(n, flat, dtype=np.float32)
