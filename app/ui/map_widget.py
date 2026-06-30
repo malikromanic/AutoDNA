@@ -1,27 +1,28 @@
-# ============================================================================
-# Map Widget — GPS Route Colored by XGBoost Predictions
+#============================================================================
+#map widget - gps prikaz poti pobarvane z gps-only detekcijo
 #
-# Visualization modes (orthogonal):
-#   Turns / Hills / Combined  — which model prediction to color
-#   Per Window / Merged       — one segment per window vs merged consecutive runs
+#pristop: sprememba gps smeri zazna zavoj (l/d); klanci (gor/dol) iz naklona
+#dem profila (data_loader.compute_hills) - naprava-gps visina se ignorira.
+#zaznani odseki so dostopni na MapWidget.segments za prihodnje regresijsko delo.
 #
-# Per Window (default): every prediction window is drawn as its own polyline.
-#   Shows all M windows with individual colors.
-#
-# Merged: consecutive windows with the same prediction are merged into one
-#   larger segment. Fewer, cleaner segments.
-#
-# Combined draws two overlapping layers:
-#   thick semi-transparent background = hill prediction color
-#   thinner opaque foreground         = turn prediction color
-# ============================================================================
+#nacini vizualizacije (neodvisni):
+#  zavoji / klanci / kombinirano - katera gps detekcija se obarva
+#  filtriraj kratke odseke       - iznici odseke krajse od min_run praga
+#============================================================================
+"""Folium-based route map embedded in a QWebEngineView.
 
-import os
-import tempfile
+Renders the GPS track as a colored polyline in one of five modes
+(Turns, Hills, Combined, Turns-performance, Hills-performance) and
+rebuilds a detailed per-segment list (:data:`MapWidget.segments`) on
+every render, intended for future regression work beyond what the live
+app currently uses it for.
+"""
+
+import math
 import numpy as np
 import folium
-from collections import Counter
 
+from AutoDNA.app.get_path import get_data_dir
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineSettings
 from PyQt6.QtCore import QUrl
@@ -29,282 +30,381 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QCheckBox
 )
 
-# ── Color / label tables ──────────────────────────────────────────────────────
-_TURN_COLOR  = {0: '#9e9e9e', 1: '#1565c0', 2: '#e65100'}
-_TURN_LABEL  = {0: 'Straight', 1: 'Left Turn', 2: 'Right Turn'}
-_TURN_WEIGHT = {0: 3, 1: 6, 2: 6}
 
-_HILL_COLOR  = {0: '#9e9e9e', 1: '#2e7d32', 2: '#6a1b9a'}
-_HILL_LABEL  = {0: 'Flat', 1: 'Uphill', 2: 'Downhill'}
-_HILL_WEIGHT = {0: 3, 1: 6, 2: 6}
+#barve in oznake za zavoje in klance
+_TURN_COLOR = {0: '#9e9e9e', 1: '#1565c0', 2: '#e65100'}
+_TURN_LABEL = {0: 'Straight', 1: 'Left Turn', 2: 'Right Turn'}
+_TURN_WBASE = 3  #debelina crte za odsek brez zavoja
+_TURN_WEVENT = 6  #debelina crte za zaznani zavoj
 
+_HILL_COLOR = {0: '#9e9e9e', 1: '#2e7d32', 2: '#6a1b9a'}
+_HILL_LABEL = {0: 'Flat', 1: 'Uphill', 2: 'Downhill'}
+_HILL_WBASE = 3
+_HILL_WEVENT = 6
 
-# ── Popup builders ────────────────────────────────────────────────────────────
+#fuel-record performance: 1=rekord (zelena), 2=blizu rekorda (oranzna), 3=slabse (rdeca)
+_PERF_COLOR = {0: '#9e9e9e', 1: '#27ae60', 2: '#f0a500', 3: '#e74c3c'}
+_PERF_LABEL = {0: '—', 1: 'Record', 2: 'Close to record', 3: 'Worse than record'}
+_PERF_WBASE = 3
+_PERF_WEVENT = 7
 
-def _window_popup(w_idx, turn, hill, t0, t1, turn_conf, hill_conf,
-                  gps_pts, turn_raw, hill_raw, mode):
-    dur = t1 - t0
-    t_col = _TURN_COLOR[turn]
-    h_col = _HILL_COLOR[hill]
-    header_col = h_col if mode == 'hills' else t_col
-    header_lbl = _HILL_LABEL[hill] if mode == 'hills' else _TURN_LABEL[turn]
-    return (
-        f"<div style='font-family:sans-serif;font-size:12px;min-width:240px'>"
-        f"<b style='color:{header_col};font-size:14px'>{header_lbl}</b>"
-        f" <span style='color:#aaa;font-size:11px'>W#{w_idx+1}</span><br>"
-        f"<hr style='margin:4px 0;border-color:#eee'>"
-        f"<table style='border-collapse:collapse;width:100%'>"
-        f"<tr><td colspan='2' style='padding:2px 0 4px'>"
-        f"  <span style='background:{t_col};color:#fff;padding:2px 5px;"
-        f"border-radius:3px;font-size:10px'>Turn: {_TURN_LABEL[turn]}</span>&nbsp;"
-        f"  <span style='background:{h_col};color:#fff;padding:2px 5px;"
-        f"border-radius:3px;font-size:10px'>Hill: {_HILL_LABEL[hill]}</span>"
-        f"</td></tr>"
-        f"<tr><td style='color:#777;padding:2px 5px'>IMU time</td>"
-        f"    <td>{t0:.1f}s – {t1:.1f}s ({dur:.1f}s)</td></tr>"
-        f"<tr><td style='color:#777;padding:2px 5px'>Turn conf</td>"
-        f"    <td><b style='color:{t_col}'>{turn_conf:.1%}</b></td></tr>"
-        f"<tr><td style='color:#777;padding:2px 5px'>Hill conf</td>"
-        f"    <td><b style='color:{h_col}'>{hill_conf:.1%}</b></td></tr>"
-        f"<tr><td style='color:#777;padding:2px 5px'>GPS points</td>"
-        f"    <td>{gps_pts}</td></tr>"
-        f"<tr><td style='color:#777;padding:2px 5px'>Turn (raw)</td>"
-        f"    <td>N:{turn_raw[0]} L:{turn_raw[1]} R:{turn_raw[2]}</td></tr>"
-        f"<tr><td style='color:#777;padding:2px 5px'>Hill (raw)</td>"
-        f"    <td>Flat:{hill_raw[0]} Up:{hill_raw[1]} Dn:{hill_raw[2]}</td></tr>"
-        f"<tr><td style='color:#777;padding:2px 5px'>Model</td>"
-        f"    <td>XGBoost (turn + hill)</td></tr>"
-        f"</table></div>"
-    )
+#minimalne dolzine zaporedja - krajse se steje za sum
+_MIN_TURN_WIN   = 2    #~2 okni (~2 s)
+_MIN_HILL_WIN   = 2    #~2 okni = ~2 s
+_MERGE_TURN_WIN = 4    #~4 okna pri vklopljenem filtriranju kratkih odsekov
+_MERGE_HILL_WIN = 4    #~4 s
+
+#zapolnjevanje vrzeli - odseki iste vrste loceni z max toliko nicami se zdruzijo
+_MERGE_GAP_GPS = 5
+
+    
+def _route_segments(arr: np.ndarray):
+    """Return list of (i0, i1, pred) for consecutive equal-value runs."""
+    #razstavi polje na odseke z enako vrednostjo - uporablja se za barvanje poti
+    segs, i, N = [], 0, len(arr)
+    while i < N:
+        p = int(arr[i])
+        j = i
+        while j < N and int(arr[j]) == p:
+            j += 1
+        segs.append((i, j, p))
+        i = j
+    return segs
 
 
-def _segment_popup(seg, i0, i1, mode):
-    turn = seg['turn']
-    hill = seg['hill']
-    t_col = _TURN_COLOR[turn]
-    h_col = _HILL_COLOR[hill]
-    dur = seg['t1'] - seg['t0']
-    header_col = h_col if mode == 'hills' else t_col
-    header_lbl = _HILL_LABEL[hill] if mode == 'hills' else _TURN_LABEL[turn]
-    tr = seg['turn_raw']
-    hr = seg['hill_raw']
-    sparse = (f"<span style='color:#e67e22'>⚠ {seg['n_sparse']} sparse windows</span><br>"
-              if seg['n_sparse'] else "")
-    return (
-        f"<div style='font-family:sans-serif;font-size:12px;min-width:250px'>"
-        f"<b style='color:{header_col};font-size:14px'>{header_lbl}</b><br>"
-        f"<hr style='margin:4px 0;border-color:#eee'>"
-        f"<table style='border-collapse:collapse;width:100%'>"
-        f"<tr><td colspan='2' style='padding:2px 0 4px'>"
-        f"  <span style='background:{t_col};color:#fff;padding:2px 5px;"
-        f"border-radius:3px;font-size:10px'>Turn: {_TURN_LABEL[turn]}</span>&nbsp;"
-        f"  <span style='background:{h_col};color:#fff;padding:2px 5px;"
-        f"border-radius:3px;font-size:10px'>Hill: {_HILL_LABEL[hill]}</span>"
-        f"</td></tr>"
-        f"<tr><td style='color:#777;padding:2px 5px'>Windows</td>"
-        f"    <td><b>{seg['start_w']+1}–{seg['end_w']+1}</b> ({seg['n_win']}×2s)</td></tr>"
-        f"<tr><td style='color:#777;padding:2px 5px'>IMU time</td>"
-        f"    <td>{seg['t0']:.1f}s – {seg['t1']:.1f}s ({dur:.1f}s)</td></tr>"
-        f"<tr><td style='color:#777;padding:2px 5px'>Turn conf</td>"
-        f"    <td><b style='color:{t_col}'>{seg['avg_turn_conf']:.1%}</b></td></tr>"
-        f"<tr><td style='color:#777;padding:2px 5px'>Hill conf</td>"
-        f"    <td><b style='color:{h_col}'>{seg['avg_hill_conf']:.1%}</b></td></tr>"
-        f"<tr><td style='color:#777;padding:2px 5px'>GPS points</td>"
-        f"    <td>{i1 - i0}</td></tr>"
-        f"<tr><td style='color:#777;padding:2px 5px'>Turn (raw)</td>"
-        f"    <td>N:{tr[0]} L:{tr[1]} R:{tr[2]}</td></tr>"
-        f"<tr><td style='color:#777;padding:2px 5px'>Hill (raw)</td>"
-        f"    <td>Flat:{hr[0]} Up:{hr[1]} Dn:{hr[2]}</td></tr>"
-        f"<tr><td style='color:#777;padding:2px 5px'>Model</td>"
-        f"    <td>XGBoost (turn + hill)</td></tr>"
-        f"</table>{sparse}</div>"
-    )
+def _filter_preds(preds: np.ndarray, min_run: int, max_run: int = 0) -> np.ndarray:
+    """Zero out non-zero runs shorter than min_run or longer than max_run (0 = no cap)."""
+    out = preds.copy()
+    for i0, i1, p in _route_segments(preds):
+        if p != 0 and ((i1 - i0) < min_run or (max_run > 0 and (i1 - i0) > max_run)):
+            out[i0:i1] = 0
+    return out.astype(np.int32)
 
 
-# ── Segment builder (for merged view) ────────────────────────────────────────
+def _merge_gaps(arr: np.ndarray, max_gap: int) -> np.ndarray:
+    """
+    Fill zero gaps of <= max_gap points between consecutive same-value non-zero runs.
 
-def _build_segments(label_seq, turn_preds, hill_preds,
-                    turn_preds_raw, hill_preds_raw,
-                    win_start, win_end, imu_ts, ws,
-                    turn_proba, hill_proba):
-    M = len(turn_preds)
+    Example: [1,1,0,0,1,1] with max_gap=3 → [1,1,1,1,1,1]
+             [1,1,0,2,0,1] — different values on each side → gaps are NOT filled
+
+    Iterates until stable so chained merges are handled:
+    [1,0,1,0,1] with max_gap=1 → [1,1,1,1,1] in two passes.
+    """
+    out = arr.copy()
+    while True:
+        changed = False
+        segs = _route_segments(out)
+        for k in range(len(segs) - 2):
+            _, i1_a, pred_a = segs[k]
+            i0_z, i1_z, pred_z = segs[k + 1]
+            i0_b, _, pred_b = segs[k + 2]
+            if pred_z == 0 and pred_a != 0 and pred_a == pred_b and (i1_z - i0_z) <= max_gap:
+                out[i0_z:i1_z] = pred_a
+                changed = True
+        if not changed:
+            break
+    return out.astype(np.int32)
+
+
+def _build_segments(gps_ts, gps_lat, gps_lon, gps_speed, gps_heading, gps_elevation,
+                    turn_at_gps, turn_deltas,
+                    hill_at_gps, hill_deltas):
+    """
+    Extract all detected GPS event segments as a list of dicts.
+    Stored on MapWidget.segments — ready for regression by teammates.
+
+    Each segment includes:
+      - GPS indices, coordinates, timing, speed stats
+      - Turns: turn_angle_deg, turn_severity (0-1), max_heading_change_deg
+      - Hills: alt_gain_m (signed), slope_pct, direction
+    """
+    _type = {
+        ('turn', 1): 'left_turn',  ('turn', 2): 'right_turn',
+        ('hill', 1): 'uphill',     ('hill', 2): 'downhill',
+    }
+    N        = len(gps_lat)
     segments = []
-    w = 0
-    while w < M:
-        key = label_seq[w]
-        start_w = w
-        while w < M and label_seq[w] == key:
-            w += 1
-        end_w = w - 1
 
-        turn_seg = [int(turn_preds[ww]) for ww in range(start_w, end_w + 1)]
-        hill_seg = [int(hill_preds[ww]) for ww in range(start_w, end_w + 1)]
-        turn_raw_flat = [int(turn_preds_raw[ww]) for ww in range(start_w, end_w + 1)]
-        hill_raw_flat = [int(hill_preds_raw[ww]) for ww in range(start_w, end_w + 1)]
+    for task, preds, deltas in (('turn', turn_at_gps, turn_deltas),
+                                 ('hill', hill_at_gps, hill_deltas)):
+        for i0, i1, pred in _route_segments(preds):
+            if pred == 0:
+                continue
+            i1c = min(i1, N) - 1
+            n   = i1 - i0
+            dur = float(gps_ts[i1c] - gps_ts[i0]) if n > 1 else 0.0
+            spd = gps_speed[i0:i1]
 
-        dom_turn = Counter(turn_seg).most_common(1)[0][0]
-        dom_hill = Counter(hill_seg).most_common(1)[0][0]
+            seg: dict = {
+                'type':           _type[(task, pred)],
+                'gps_start':      int(i0),
+                'gps_end':        int(i1c),
+                'n_gps_points':   int(n),
+                'duration_s':     round(dur, 2),
+                'lat_start':      float(gps_lat[i0]),
+                'lon_start':      float(gps_lon[i0]),
+                'lat_end':        float(gps_lat[i1c]),
+                'lon_end':        float(gps_lon[i1c]),
+                'coords':         list(zip(gps_lat[i0:i1].tolist(),
+                                           gps_lon[i0:i1].tolist())),
+                'speed_mean_kmh': round(float(spd.mean()), 2) if n > 0 else 0.0,
+                'speed_min_kmh':  round(float(spd.min()),  2) if n > 0 else 0.0,
+                'speed_max_kmh':  round(float(spd.max()),  2) if n > 0 else 0.0,
+            }
 
-        pts_per_win = [
-            int(win_end[ww]) - int(win_start[ww]) + 1
-            for ww in range(start_w, end_w + 1)
-        ]
-        n_sparse = sum(1 for p in pts_per_win if p < 3)
+            #razdalja odseka - haversine vsota vzdolz vseh gps tock
+            seg_dist_m = 0.0
+            for k in range(i0, i1c):
+                phi1k = math.radians(float(gps_lat[k]))
+                phi2k = math.radians(float(gps_lat[k + 1]))
+                dphik = phi2k - phi1k
+                dlamk = math.radians(float(gps_lon[k + 1]) - float(gps_lon[k]))
+                ak    = (math.sin(dphik / 2) ** 2 +
+                         math.cos(phi1k) * math.cos(phi2k) * math.sin(dlamk / 2) ** 2)
+                seg_dist_m += 6_371_000 * 2 * math.atan2(math.sqrt(ak), math.sqrt(1 - ak))
+            seg['segment_distance_m'] = round(seg_dist_m, 1)
 
-        avg_turn_conf = float(np.mean([
-            float(turn_proba[ww, int(turn_preds[ww])])
-            for ww in range(start_w, end_w + 1)
-        ]))
-        avg_hill_conf = float(np.mean([
-            float(hill_proba[ww, int(hill_preds[ww])])
-            for ww in range(start_w, end_w + 1)
-        ]))
+            if task == 'turn':
+                h_start   = float(gps_heading[i0])
+                h_end     = float(gps_heading[i1c])
+                angle     = (h_end - h_start + 180) % 360 - 180   #podpisan kot v stopinjah
+                max_delta = float(deltas[i0:i1].max()) if n > 0 else 0.0
 
-        t0 = float(imu_ts[min(start_w * ws, len(imu_ts) - 1)])
-        t1 = float(imu_ts[min((end_w + 1) * ws - 1, len(imu_ts) - 1)])
+                #kumulativni kot - vsota |dsmerni_kot| po korakih, s-krivulje se ne anulirajo
+                cum_hdg = 0.0
+                for k in range(i0, i1c):
+                    dh = (float(gps_heading[k + 1]) - float(gps_heading[k]) + 180) % 360 - 180
+                    cum_hdg += abs(dh)
 
-        segments.append({
-            'key':           key,
-            'turn':          dom_turn,
-            'hill':          dom_hill,
-            'start_w':       start_w,
-            'end_w':         end_w,
-            'n_win':         end_w - start_w + 1,
-            'gps_i0':        int(win_start[start_w]),
-            'gps_i1':        int(win_end[end_w]),
-            'n_sparse':      n_sparse,
-            'avg_turn_conf': avg_turn_conf,
-            'avg_hill_conf': avg_hill_conf,
-            't0':            t0,
-            't1':            t1,
-            # raw vote tallies [none, left/up, right/down]
-            'turn_raw': [turn_raw_flat.count(0), turn_raw_flat.count(1), turn_raw_flat.count(2)],
-            'hill_raw': [hill_raw_flat.count(0), hill_raw_flat.count(1), hill_raw_flat.count(2)],
-        })
+                seg['turn_angle_deg']             = round(abs(angle), 1)
+                seg['turn_direction']             = 'left' if pred == 1 else 'right'
+                seg['turn_severity']              = round(min(abs(angle) / 180.0, 1.0), 3)
+                seg['max_heading_change_deg']     = round(max_delta, 1)
+                seg['cumulative_heading_deg']     = round(cum_hdg, 1)
+                #ostrina na meter - locuje oster zavoj na 20m od blagega na 300m
+                seg['heading_change_rate_deg_per_m'] = (
+                    round(cum_hdg / seg_dist_m, 4) if seg_dist_m > 1.0 else 0.0
+                )
+            else:
+                alt_start  = float(gps_elevation[i0])
+                alt_end    = float(gps_elevation[i1c])
+                alt_change = alt_end - alt_start   #pozitivno = pridobljena visina
+
+                #najstrmejsa tocka v odseku - bolj diagnosticno od povprecnega naklona
+                max_slope = 0.0
+                for k in range(i0, i1c):
+                    phi1k = math.radians(float(gps_lat[k]))
+                    phi2k = math.radians(float(gps_lat[k + 1]))
+                    dphik = phi2k - phi1k
+                    dlamk = math.radians(float(gps_lon[k + 1]) - float(gps_lon[k]))
+                    ak    = (math.sin(dphik / 2) ** 2 +
+                             math.cos(phi1k) * math.cos(phi2k) * math.sin(dlamk / 2) ** 2)
+                    dm    = 6_371_000 * 2 * math.atan2(math.sqrt(ak), math.sqrt(1 - ak))
+                    if dm > 0.5:   #ignoriraj gps sum pod enim metrom
+                        pt_slope = abs(float(gps_elevation[k + 1]) - float(gps_elevation[k])) / dm * 100
+                        if pt_slope > max_slope:
+                            max_slope = pt_slope
+
+                phi1 = math.radians(float(gps_lat[i0]))
+                phi2 = math.radians(float(gps_lat[i1c]))
+                dphi = phi2 - phi1
+                dlam = math.radians(float(gps_lon[i1c]) - float(gps_lon[i0]))
+                a         = (math.sin(dphi / 2) ** 2 +
+                             math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2)
+                dist_m    = 6_371_000 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+                slope_pct = (alt_change / dist_m * 100.0) if dist_m > 1.0 else 0.0
+                seg['alt_gain_m']    = round(alt_change, 1)
+                seg['slope_pct']     = round(slope_pct, 2)
+                seg['max_slope_pct'] = round(max_slope, 2)
+                seg['direction']     = 'uphill' if pred == 1 else 'downhill'
+
+            segments.append(seg)
     return segments
 
 
-# ── Per-window renderer ───────────────────────────────────────────────────────
 
-def _draw_per_window(fmap, turn_preds, hill_preds,
-                     turn_preds_raw, hill_preds_raw,
-                     win_start, win_end, win_center, imu_ts, ws,
-                     turn_proba, hill_proba,
-                     lat, lon, N, mode,
-                     color_fn, radius_fn, opacity=0.9, add_popup=True):
+# ── Oznake dogodkov ──────────────────────────────────────────────────────────
+
+#neuporabljeno po migraciji na gps-only detekcijo
+#prej risalo piko na gps center vsakega xgboost okna
+#odstranjeno ker detekcija poteka na ravni gps tock; _draw_colored_route
+#ze postavi circlemarker na zacetek vsakega odseka na ravni gps tock
+#ohranjeno za morebitno prihodnje regresijsko delo (pike resnosti po oknih)
+#
+# def _draw_segment_dots(fmap, lat, lon,
+#                        turn_preds: np.ndarray, turn_proba: np.ndarray,
+#                        hill_preds: np.ndarray, hill_proba: np.ndarray,
+#                        win_center_gps: np.ndarray, mode: str):
+#     """Colored dot at the GPS center of each event window (none=0 skipped)."""
+#     N = len(lat)
+#     turn_color = {1: '#1565c0', 2: '#e65100'}
+#     turn_label = {1: 'Left Turn', 2: 'Right Turn'}
+#     hill_color = {1: '#2e7d32', 2: '#6a1b9a'}
+#     hill_label = {1: 'Uphill',   2: 'Downhill'}
+#
+#     for i in range(len(turn_preds)):
+#         gps_idx = int(min(win_center_gps[i], N - 1))
+#         loc = [float(lat[gps_idx]), float(lon[gps_idx])]
+#
+#         if mode in ('turns', 'combined'):
+#             tp = int(turn_preds[i])
+#             if tp != 0:
+#                 conf = float(turn_proba[i, tp])
+#                 folium.CircleMarker(
+#                     location=loc, radius=5,
+#                     color='white', weight=1,
+#                     fill=True, fillColor=turn_color[tp], fillOpacity=0.95,
+#                     tooltip=f"{turn_label[tp]}  win#{i}  {conf:.0%}",
+#                     popup=folium.Popup(
+#                         f"<b style='color:{turn_color[tp]}'>{turn_label[tp]}</b>"
+#                         f"<br>win #{i} · {conf:.1%}", max_width=180),
+#                 ).add_to(fmap)
+#
+#         if mode in ('hills', 'combined'):
+#             hp = int(hill_preds[i])
+#             if hp != 0:
+#                 conf = float(hill_proba[i, hp])
+#                 folium.CircleMarker(
+#                     location=loc, radius=5,
+#                     color='white', weight=1,
+#                     fill=True, fillColor=hill_color[hp], fillOpacity=0.95,
+#                     tooltip=f"{hill_label[hp]}  win#{i}  {conf:.0%}",
+#                     popup=folium.Popup(
+#                         f"<b style='color:{hill_color[hp]}'>{hill_color[hp]}</b>"
+#                         f"<br>win #{i} · {conf:.1%}", max_width=180),
+#                 ).add_to(fmap)
+
+
+# ── Risanje poti ─────────────────────────────────────────────────────────────
+
+def _draw_colored_route(fmap, lat, lon,
+                        pred_at_gps: np.ndarray,
+                        conf_at_gps: np.ndarray,
+                        color_map: dict, label_map: dict,
+                        weight_base: int, weight_event: int,
+                        opacity_base: float, opacity_event: float,
+                        task_name: str,
+                        seg_lookup: dict = None,
+                        add_popup: bool = True):
+    """Draw one colored polyline layer onto ``fmap``, one per detected-class run.
+
+    Adds a tooltip/popup with segment metrics (pulled from
+    ``seg_lookup``) and a start-of-segment marker for each non-zero run
+    when ``add_popup`` is set; used to layer turns over hills in
+    Combined mode by calling this twice with ``add_popup=False`` for
+    the background layer.
     """
-    Draw one CircleMarker per window at the window's center GPS position.
+    N    = len(lat)
+    segs = _route_segments(pred_at_gps)
 
-    Windows are overlapping (stride=25, size=100), so many share GPS points.
-    Circle markers at center-time position are the correct visualization —
-    each of the M windows gets its own visible dot on the route.
-    """
-    M   = len(turn_preds)
-    K   = len(imu_ts)
-    for w in range(M):
-        ic   = min(int(win_center[w]), N - 1)
-        turn = int(turn_preds[w])
-        hill = int(hill_preds[w])
-        color  = color_fn(turn, hill)
-        radius = radius_fn(turn, hill)
-
-        s0 = min(w * 25, K - 1)
-        s1 = min(s0 + ws - 1, K - 1)
-        t0 = float(imu_ts[s0])
-        t1 = float(imu_ts[s1])
-        turn_conf = float(turn_proba[w, turn])
-        hill_conf = float(hill_proba[w, hill])
-
-        kw: dict = dict(
-            location=[float(lat[ic]), float(lon[ic])],
-            radius=radius,
-            color=color,
-            weight=1.5,
-            fill=True,
-            fillColor=color,
-            fillOpacity=opacity,
-        )
-        if add_popup:
-            raw_t = [0, 0, 0]
-            raw_t[int(turn_preds_raw[w])] = 1
-            raw_h = [0, 0, 0]
-            raw_h[int(hill_preds_raw[w])] = 1
-            kw['tooltip'] = (
-                f"W#{w+1} | {_TURN_LABEL[turn]} / {_HILL_LABEL[hill]} "
-                f"| T:{turn_conf:.0%} H:{hill_conf:.0%}"
-            )
-            kw['popup'] = folium.Popup(
-                _window_popup(w, turn, hill, t0, t1, turn_conf, hill_conf,
-                              1, raw_t, raw_h, mode),
-                max_width=280,
-            )
-        folium.CircleMarker(**kw).add_to(fmap)
-
-
-# ── Merged segment renderer ───────────────────────────────────────────────────
-
-def _draw_segment_list(fmap, segments, lat, lon, N, color_fn, weight_fn,
-                       mode, opacity=0.92, add_popup=True):
-    for i, seg in enumerate(segments):
-        i0 = max(0, seg['gps_i0'])
-        i1 = segments[i + 1]['gps_i0'] + 1 if i < len(segments) - 1 else N
-        i1 = min(i1, N)
-        color  = color_fn(seg['turn'], seg['hill'])
-        weight = weight_fn(seg['turn'], seg['hill'])
-
-        if i1 - i0 < 2:
-            if i0 < N and add_popup:
-                folium.CircleMarker(
-                    location=[float(lat[i0]), float(lon[i0])],
-                    radius=4, color=color, fill=True,
-                    fillColor=color, fillOpacity=0.9,
-                    tooltip=f"{_TURN_LABEL[seg['turn']]} / {_HILL_LABEL[seg['hill']]}",
-                ).add_to(fmap)
+    for (i0, i1, pred) in segs:
+        start  = max(0, i0)
+        end    = min(N, i1 + 1)
+        coords = [(float(lat[k]), float(lon[k])) for k in range(start, end)]
+        if len(coords) < 2:
             continue
 
-        coords = [(float(lat[k]), float(lon[k])) for k in range(i0, i1)]
-        kw = dict(color=color, weight=weight, opacity=opacity)
-        if add_popup:
+        color   = color_map[pred]
+        weight  = weight_event if pred != 0 else weight_base
+        opacity = opacity_event if pred != 0 else opacity_base
+
+        kw: dict = dict(color=color, weight=weight, opacity=opacity)
+
+        if add_popup and pred != 0:
+            n_pts = i1 - i0
+            avg_c = float(conf_at_gps[i0:i1].mean()) if n_pts > 0 else 0.0
+            i1c   = min(i1, N) - 1
+
+            #poisci ze izracunano metriko za ta odsek (kot zavoja ali naklon klanca)
+            seg = seg_lookup.get((i0, i1c)) if seg_lookup else None
+            metric_html  = ""
+            metric_short = ""
+            if seg and task_name == 'turn':
+                metric_html  = f"Angle&nbsp; <b>{seg['turn_angle_deg']:.0f}&deg;</b><br>"
+                metric_short = f" · {seg['turn_angle_deg']:.0f}°"
+            elif seg and task_name == 'hill':
+                metric_html  = f"Slope&nbsp; <b>{seg['slope_pct']:+.1f}%</b><br>"
+                metric_short = f" · {seg['slope_pct']:+.1f}%"
+
             kw['tooltip'] = (
-                f"{_TURN_LABEL[seg['turn']]} / {_HILL_LABEL[seg['hill']]}  "
-                f"({seg['n_win']}×2s)"
+                f"{label_map[pred]}  "
+                f"({n_pts} GPS pts · {avg_c:.0%} GPS strength{metric_short})"
             )
             kw['popup'] = folium.Popup(
-                _segment_popup(seg, i0, i1, mode), max_width=290
+                f"<div style='font-family:sans-serif;font-size:12px'>"
+                f"<b style='color:{color};font-size:14px'>{label_map[pred]}</b><br>"
+                f"<hr style='margin:4px 0'>"
+                f"GPS pts&nbsp; {i0}–{i1-1} ({n_pts} pts)<br>"
+                f"{metric_html}"
+                f"GPS strength&nbsp; <b>{avg_c:.1%}</b><br>"
+                f"Source&nbsp; GPS {task_name}"
+                f"</div>",
+                max_width=220,
             )
+        elif add_popup:
+            kw['tooltip'] = label_map[pred]
+
         folium.PolyLine(coords, **kw).add_to(fmap)
 
+    if add_popup:
+        for (i0, i1, pred) in segs:
+            if pred == 0 or i0 >= N:
+                continue
+            n_pts = i1 - i0
+            avg_c = float(conf_at_gps[i0:i1].mean()) if n_pts > 0 else 0.0
+            folium.CircleMarker(
+                location=[float(lat[i0]), float(lon[i0])],
+                radius=5,
+                color='white', weight=1.5,
+                fill=True, fillColor=color_map[pred], fillOpacity=1.0,
+                tooltip=f"▶ {label_map[pred]} starts here  ({n_pts} GPS pts · {avg_c:.0%})",
+            ).add_to(fmap)
 
-# ── Main widget ───────────────────────────────────────────────────────────────
+
+# ── Glavni gradnik ────────────────────────────────────────────────────────────
 
 class MapWidget(QWidget):
     """Folium map with Turns/Hills/Combined × Per Window/Merged selectors."""
 
     def __init__(self):
         super().__init__()
+        #podatki voznje - nastavljeni z set_drive_data
         self.drive_data = None
+        #pot do zacasne html datoteke folium karte
         self._tmp_path: str | None = None
-        self._mode   = 'turns'   # 'turns' | 'hills' | 'combined'
-        self._merged = False     # False = per-window (default), True = merged
+        #trenutni nacin prikaza: turns, hills ali combined
+        self._mode   = 'turns'
+        #ali filtriramo kratke odseke (manj kot 4 gps tocke)
+        self._merged = False
+        #neuporabljeno po migraciji na gps-only detekcijo
+        #se je uporabljalo za prikaz/skrivanje per-okno xgboost pik (_draw_segment_dots)
+        #ohranjeno kot opomnik da je podpora za per-okno oznacevalce obnovljiva
+        # self._show_markers = True
+        #zaznani odseki dogodkov - polnjeni po vsakem izrisu, pripravljeni za regresijo
+        self.segments: list[dict] = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── Selector bar ──────────────────────────────────────────────────────
+        #prva vrstica: gumbi za preklop med zavoji, klanci in kombiniranim prikazom
         bar = QHBoxLayout()
-        bar.setContentsMargins(8, 6, 8, 4)
+        bar.setContentsMargins(8, 6, 8, 2)
         bar.setSpacing(6)
 
         lbl = QLabel("View:")
         lbl.setStyleSheet("font-size: 11px; color: #666; padding: 0;")
         bar.addWidget(lbl)
 
+        #ustvari tri gumbe - vsak ima svojo barvo ko je aktiven
         self._mode_btns: dict[str, QPushButton] = {}
         for mid, mlbl, col in [
-            ('turns',    'Turns',    '#1565c0'),
-            ('hills',    'Hills',    '#2e7d32'),
-            ('combined', 'Combined', '#6a1b9a'),
+            ('turns',            'Turns',       '#1565c0'),
+            ('hills',            'Hills',       '#2e7d32'),
+            ('combined',         'Combined',    '#6a1b9a'),
+            ('turns-performance', 'Turns ⛽',    '#16a085'),
+            ('hills-performance', 'Hills ⛽',    '#16a085'),
         ]:
             btn = QPushButton(mlbl)
             btn.setCheckable(True)
@@ -326,38 +426,62 @@ class MapWidget(QWidget):
             self._mode_btns[mid] = btn
             bar.addWidget(btn)
 
-        # Separator
-        sep = QLabel("  |  ")
-        sep.setStyleSheet("color:#ccc; font-size:12px;")
-        bar.addWidget(sep)
-
-        # Merge toggle
-        self._merge_cb = QCheckBox("Merge segments")
-        self._merge_cb.setChecked(False)
-        self._merge_cb.setStyleSheet("font-size: 11px; color: #555;")
-        self._merge_cb.stateChanged.connect(self._on_merge_changed)
-        bar.addWidget(self._merge_cb)
-
         bar.addStretch()
+        #ob zagonu prikazi samo zavoje
         self._mode_btns['turns'].setChecked(True)
         layout.addLayout(bar)
 
-        # ── Web view ──────────────────────────────────────────────────────────
+        #druga vrstica: moznosti filtriranja in prikaza oznacevalnikov
+        bar2 = QHBoxLayout()
+        bar2.setContentsMargins(8, 2, 8, 4)
+        bar2.setSpacing(6)
+
+        #filtriraj odseke krajse od 4 gps tock - zmanjsa sum napacnih napovedi
+        self._merge_cb = QCheckBox("Filter short events")
+        self._merge_cb.setChecked(False)
+        self._merge_cb.setStyleSheet("font-size: 11px; color: #555;")
+        self._merge_cb.stateChanged.connect(self._on_merge_changed)
+        bar2.addWidget(self._merge_cb)
+
+        #neuporabljeno po migraciji na gps-only detekcijo
+        #ui elementi so vklapljali/izklapljali _draw_segment_dots() per-okno pike
+        #potrditveno polje ni vplivalo na barvanje poti na ravni gps - to se vedno izrise
+        #obnovi ko bo podpora za per-okno pike resnosti/regresije znova uvedena
+        #
+        # sep = QLabel(" | ")
+        # sep.setStyleSheet("color:#ccc; font-size:12px;")
+        # bar2.addWidget(sep)
+        #
+        # self._markers_cb = QCheckBox("Show all segments")
+        # self._markers_cb.setChecked(True)
+        # self._markers_cb.setStyleSheet("font-size: 11px; color: #555;")
+        # self._markers_cb.stateChanged.connect(self._on_markers_changed)
+        # bar2.addWidget(self._markers_cb)
+
+        bar2.addStretch()
+        layout.addLayout(bar2)
+
+        #qwebengineview za prikaz folium html karte
+        #lokalni dostop do oddaljenih virov je potreben za openstreetmap plosce
         self.webview = QWebEngineView()
         s = self.webview.settings()
         s.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
         s.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
         layout.addWidget(self.webview)
 
+        #prikazi nadomestno stran dokler ni nalozena voznja
         self._show_placeholder()
 
-    # ── public ────────────────────────────────────────────────────────────────
+    # ── Javne metode ─────────────────────────────────────────────────────────
+            
     def set_drive_data(self, drive_data):
+        """Store the loaded drive and render the map in the current mode."""
+        #shrani podatke in takoj izrisi karto
         self.drive_data = drive_data
         self._render_map()
 
-    # ── internal ──────────────────────────────────────────────────────────────
     def _set_mode(self, mode: str):
+        #preklopi nacin prikaza in odznaci vse ostale gumbe
         self._mode = mode
         for m, btn in self._mode_btns.items():
             btn.setChecked(m == mode)
@@ -365,11 +489,21 @@ class MapWidget(QWidget):
             self._render_map()
 
     def _on_merge_changed(self, state):
+        #vklopi ali izklopi filtriranje kratkih odsekov
         self._merged = bool(state)
         if self.drive_data:
             self._render_map()
 
+    #neuporabljeno po migraciji na gps-only detekcijo
+    #upravljavec potrditvenega polja za per-okno xgboost pike
+    #ohranjeno za morebitno prihodnje regresijsko delo (povezi z _markers_cb ko se pike vrnejo)
+    # def _on_markers_changed(self, state):
+    #     self._show_markers = bool(state)
+    #     if self.drive_data:
+    #         self._render_map()
+
     def _show_placeholder(self):
+        #prikazi html stran z navodilom ko ni nalozene voznje
         self.webview.setHtml("""
             <html><body style="background:#f8f9fa;display:flex;align-items:center;
                 justify-content:center;height:100vh;margin:0;
@@ -377,176 +511,211 @@ class MapWidget(QWidget):
               <div style="text-align:center">
                 <div style="font-size:48px">&#x1f5fa;</div>
                 <div style="font-size:14px;margin-top:8px">
-                  Open a drive folder (BIN + GPS CSV) to see the route
+                  Open a drive folder (GPS CSV) to see the route
                 </div>
               </div>
             </body></html>
         """)
 
     def _render_map(self):
+        """Rebuild the Folium map for the current drive and mode, and load it into the webview.
+
+        Re-filters the turn/hill predictions for the active short-event
+        filter setting, rebuilds :data:`self.segments`, draws the
+        selected mode's polyline layer(s), and writes the legend before
+        pushing the resulting HTML into the embedded ``QWebEngineView``
+        (in memory, without touching disk).
+        """
         d = self.drive_data
+        #preveri da so podatki nalozeni in da ima gps sled vsaj 2 tocki
         if d is None or len(d.gps_lat) < 2:
             self._show_placeholder()
             return
 
-        lat            = d.gps_lat
-        lon            = d.gps_lon
-        imu_ts         = d.imu_timestamps
-        turn_preds     = d.xgb_turn_preds
-        hill_preds     = d.xgb_hill_preds
-        turn_preds_raw = getattr(d, 'xgb_turn_preds_raw', turn_preds)
-        hill_preds_raw = getattr(d, 'xgb_hill_preds_raw', hill_preds)
-        turn_proba     = d.xgb_turn_proba
-        hill_proba     = d.xgb_hill_proba
-        win_start      = d.window_gps_start_idx
-        win_end        = d.window_gps_end_idx
-        win_center     = getattr(d, 'window_gps_center_idx',
-                                 (win_start + win_end) // 2)
-        ws             = d.window_size
-        M              = len(turn_preds)
-        N              = len(lat)
-        smooth_h       = getattr(d, 'smooth_half', 2)
-        mode           = self._mode
-        merged         = self._merged
+        lat    = d.gps_lat
+        lon    = d.gps_lon
+        N      = len(lat)
+        mode   = self._mode
+        merged = self._merged
 
+        #neuporabljeno po migraciji na gps-only detekcijo
+        #m se je uporabljal za pogojitev _draw_segment_dots() in se je prikazoval v legendi
+        # M = len(d.xgb_turn_preds)
+
+        t_min = _MERGE_TURN_WIN if merged else _MIN_TURN_WIN
+        h_min = _MERGE_HILL_WIN if merged else _MIN_HILL_WIN
+
+        #zavoji iz gps smeri (data_loader.compute_turns) - histereza da daljse
+        #zvezne odseke (vstop-vrh-izstop), ne le vrh ovinka. enak vir kot dashboard.
+        turn_at_gps      = _filter_preds(d.turn_preds.astype(np.int32), t_min)
+        turn_at_gps      = _merge_gaps(turn_at_gps, _MERGE_GAP_GPS)
+        turn_conf_at_gps = d.turn_conf.astype(np.float32)
+        #magnituda spremembe smeri (deg) za metrike odsekov v _build_segments
+        turn_deltas      = np.abs(d.turn_rate).astype(np.float32)
+
+        #klanci iz dem (digitalni model visin) - nas gps dem vir, izracunan v data_loader
+        #naklon ceste iz dem profila; naprava-gps visina se ignorira (nenatancna)
+        hill_at_gps      = _filter_preds(d.hill_preds.astype(np.int32), h_min)
+        hill_at_gps      = _merge_gaps(hill_at_gps, _MERGE_GAP_GPS)
+        hill_conf_at_gps = d.hill_conf.astype(np.float32)
+        #podpisan naklon (%) - placeholder za podpis _build_segments (klanci ga ne rabijo)
+        hill_deltas      = d.grade_pct.astype(np.float32)
+        
+        
+        
+        self.segments = _build_segments(
+            d.gps_timestamps, d.gps_lat, d.gps_lon, d.gps_speed,
+            d.gps_heading, d.elevation_sm,
+            turn_at_gps, turn_deltas,
+            hill_at_gps, hill_deltas,
+        )
+
+        #hitra preslikava (gps_start, gps_end) -> segment, za uporabo v popup/tooltip
+        _seg_lookup = {(s['gps_start'], s['gps_end']): s for s in self.segments}
+        
+        
+        #ustvari folium karto - sredinisce je povprecje gps koordinat
         fmap = folium.Map(
             location=[float(lat.mean()), float(lon.mean())],
             zoom_start=15,
             tiles='OpenStreetMap',
         )
 
-        # ── Color/weight functions ────────────────────────────────────────────
-        def turn_color(t, h):  return _TURN_COLOR[t]
-        def turn_weight(t, h): return _TURN_WEIGHT[t]
-        def hill_color(t, h):  return _HILL_COLOR[h]
-        def hill_weight(t, h): return _HILL_WEIGHT[h]
+        #fuel-record performance per gps tocka (nastavi segment_records.evaluate_drive)
+        turn_perf = getattr(d, 'turn_perf', None)
+        hill_perf = getattr(d, 'hill_perf', None)
+        turn_perf = np.zeros(N, dtype=np.int32) if turn_perf is None else turn_perf.astype(np.int32)
+        hill_perf = np.zeros(N, dtype=np.int32) if hill_perf is None else hill_perf.astype(np.int32)
+        perf_conf = np.ones(N, dtype=np.float32)
 
-        # ── GPS head (before first window) ────────────────────────────────────
-        head_end = max(0, int(win_start[0]))
-        if head_end > 0:
-            coords = [(float(lat[k]), float(lon[k])) for k in range(0, head_end + 1)]
-            if len(coords) >= 2:
-                folium.PolyLine(
-                    coords, color='#9e9e9e', weight=3, opacity=0.7,
-                    tooltip='Pre-recording GPS',
-                ).add_to(fmap)
+        #narisi pobarvano pot glede na izbrani nacin prikaza
+        if mode == 'turns':
+            _draw_colored_route(
+                fmap, lat, lon,
+                turn_at_gps, turn_conf_at_gps,
+                _TURN_COLOR, _TURN_LABEL,
+                _TURN_WBASE, _TURN_WEVENT,
+                opacity_base=0.45, opacity_event=0.92,
+                task_name='turn',
+                seg_lookup=_seg_lookup,
+            )
+        
+        elif mode == 'hills':
+            _draw_colored_route(
+                fmap, lat, lon,
+                hill_at_gps, hill_conf_at_gps,
+                _HILL_COLOR, _HILL_LABEL,
+                _HILL_WBASE, _HILL_WEVENT,
+                opacity_base=0.45, opacity_event=0.92,
+                task_name='hill',
+                seg_lookup=_seg_lookup,
+            )
 
-        # ── Draw ──────────────────────────────────────────────────────────────
-        if merged:
-            # ── Merged mode ───────────────────────────────────────────────────
-            def _segs(label_seq):
-                return _build_segments(
-                    label_seq, turn_preds, hill_preds,
-                    turn_preds_raw, hill_preds_raw,
-                    win_start, win_end, imu_ts, ws,
-                    turn_proba, hill_proba,
-                )
+        elif mode == 'turns-performance':
+            _draw_colored_route(
+                fmap, lat, lon,
+                turn_perf, perf_conf,
+                _PERF_COLOR, _PERF_LABEL,
+                _PERF_WBASE, _PERF_WEVENT,
+                opacity_base=0.40, opacity_event=0.95,
+                task_name='perf',
+                seg_lookup=None,
+            )
 
-            if mode == 'turns':
-                segs = _segs([int(x) for x in turn_preds])
-                _draw_segment_list(fmap, segs, lat, lon, N,
-                                   turn_color, turn_weight, mode)
-            elif mode == 'hills':
-                segs = _segs([int(x) for x in hill_preds])
-                _draw_segment_list(fmap, segs, lat, lon, N,
-                                   hill_color, hill_weight, mode)
-            else:  # combined
-                hsegs = _segs([int(x) for x in hill_preds])
-                tsegs = _segs([int(x) for x in turn_preds])
-                _draw_segment_list(fmap, hsegs, lat, lon, N,
-                                   hill_color, lambda t, h: 9,
-                                   mode, opacity=0.35, add_popup=False)
-                _draw_segment_list(fmap, tsegs, lat, lon, N,
-                                   turn_color, lambda t, h: 4,
-                                   mode, opacity=0.95, add_popup=True)
-            # Transition dots
-            active = segs if mode != 'combined' else tsegs
-            for i in range(1, len(active)):
-                bi = active[i]['gps_i0']
-                if bi < N:
-                    prev = active[i - 1]
-                    curr = active[i]
-                    c = turn_color(curr['turn'], curr['hill']) if mode != 'hills' else hill_color(curr['turn'], curr['hill'])
-                    pn = _TURN_LABEL[prev['turn']] if mode != 'hills' else _HILL_LABEL[prev['hill']]
-                    cn = _TURN_LABEL[curr['turn']] if mode != 'hills' else _HILL_LABEL[curr['hill']]
-                    folium.CircleMarker(
-                        location=[float(lat[bi]), float(lon[bi])],
-                        radius=5, color='white', weight=1.5,
-                        fill=True, fillColor=c, fillOpacity=1.0,
-                        tooltip=f"{pn} → {cn}",
-                    ).add_to(fmap)
-            n_vis = len(active)
+        elif mode == 'hills-performance':
+            _draw_colored_route(
+                fmap, lat, lon,
+                hill_perf, perf_conf,
+                _PERF_COLOR, _PERF_LABEL,
+                _PERF_WBASE, _PERF_WEVENT,
+                opacity_base=0.40, opacity_event=0.95,
+                task_name='perf',
+                seg_lookup=None,
+            )
 
         else:
-            # ── Per-window mode — one circle per window ───────────────────────
-            # Windows overlap (stride=25, size=100), so we use circle markers
-            # at each window's center-time GPS position rather than polylines.
-            # Radius: 5 for predicted event, 3 for "none/flat".
-            def turn_radius(t, h): return 5 if t != 0 else 3
-            def hill_radius(t, h): return 5 if h != 0 else 3
-            def comb_radius(t, h): return 6 if (t != 0 or h != 0) else 3
+            _draw_colored_route(
+                fmap, lat, lon,
+                hill_at_gps, hill_conf_at_gps,
+                _HILL_COLOR, _HILL_LABEL,
+                weight_base=4, weight_event=10,
+                opacity_base=0.25, opacity_event=0.40,
+                task_name='hill',
+                seg_lookup=_seg_lookup,
+                add_popup=False,
+            )
+            _draw_colored_route(
+                fmap, lat, lon,
+                turn_at_gps, turn_conf_at_gps,
+                _TURN_COLOR, _TURN_LABEL,
+                weight_base=3, weight_event=5,
+                opacity_base=0.45, opacity_event=0.92,
+                task_name='turn',
+                seg_lookup=_seg_lookup,
+                add_popup=True,
+            )
 
-            def _pw(color_fn, radius_fn, opacity, add_popup):
-                _draw_per_window(
-                    fmap, turn_preds, hill_preds,
-                    turn_preds_raw, hill_preds_raw,
-                    win_start, win_end, win_center, imu_ts, ws,
-                    turn_proba, hill_proba,
-                    lat, lon, N, mode,
-                    color_fn=color_fn, radius_fn=radius_fn,
-                    opacity=opacity, add_popup=add_popup,
-                )
-
-            if mode == 'turns':
-                _pw(turn_color, turn_radius, 0.85, True)
-            elif mode == 'hills':
-                _pw(hill_color, hill_radius, 0.85, True)
-            else:  # combined
-                # Outer ring: hill color (larger, semi-transparent)
-                _pw(hill_color, lambda t, h: (7 if (h != 0) else 4),
-                    0.30, False)
-                # Inner dot: turn color
-                _pw(turn_color, lambda t, h: (4 if (t != 0) else 2.5),
-                    0.90, True)
-            n_vis = M
-
-        # ── Start / End markers ───────────────────────────────────────────────
+        #oznaki zacetka in konca poti
         folium.Marker(
-            [float(lat[0]), float(lon[0])],
+            [float(lat[0]),  float(lon[0])],
             tooltip='Start',
-            icon=folium.Icon(color='green', icon='play', prefix='fa'),
+            icon=folium.Icon(color='green', icon='play',  prefix='fa'),
         ).add_to(fmap)
         folium.Marker(
             [float(lat[-1]), float(lon[-1])],
             tooltip='End',
-            icon=folium.Icon(color='red', icon='stop', prefix='fa'),
+            icon=folium.Icon(color='red',   icon='stop',  prefix='fa'),
         ).add_to(fmap)
 
-        # ── Legend ────────────────────────────────────────────────────────────
-        def _sw(color):
-            return (f"<span style='display:inline-block;width:22px;height:4px;"
-                    f"background:{color};vertical-align:middle;margin-right:5px'></span>")
+        #pomocna funkcija za barvni vzorec v legendi
+        def _swatch(color):
+            return (
+                f"<span style='display:inline-block;width:26px;height:5px;"
+                f"background:{color};vertical-align:middle;"
+                f"border-radius:2px;margin-right:5px'></span>"
+            )
 
+        #statistika za prikaz v legendi
+        n_turns = int((turn_at_gps != 0).sum())
+        n_hills = int((hill_at_gps != 0).sum())
+
+        #sestavi vsebino legende glede na nacin prikaza
         if mode == 'turns':
-            rows = (f"{_sw('#9e9e9e')}Straight<br>"
-                    f"{_sw('#1565c0')}Left Turn<br>"
-                    f"{_sw('#e65100')}Right Turn")
+            rows  = (f"{_swatch('#9e9e9e')}Straight<br>"
+                     f"{_swatch('#1565c0')}Left Turn<br>"
+                     f"{_swatch('#e65100')}Right Turn")
             title = "AutoDNA — Turns"
+            stat  = f"{n_turns} / {N} GPS pts with turn prediction"
         elif mode == 'hills':
-            rows = (f"{_sw('#9e9e9e')}Flat<br>"
-                    f"{_sw('#2e7d32')}Uphill<br>"
-                    f"{_sw('#6a1b9a')}Downhill")
+            rows  = (f"{_swatch('#9e9e9e')}Flat<br>"
+                     f"{_swatch('#2e7d32')}Uphill<br>"
+                     f"{_swatch('#6a1b9a')}Downhill")
             title = "AutoDNA — Hills"
+            stat  = f"{n_hills} / {N} GPS pts with hill prediction"
+        elif mode in ('turns-performance', 'hills-performance'):
+            rows  = (f"{_swatch('#27ae60')}Record (your best)<br>"
+                     f"{_swatch('#f0a500')}Close to record<br>"
+                     f"{_swatch('#e74c3c')}Worse than record")
+            kind  = 'Turn' if mode == 'turns-performance' else 'Hill'
+            title = f"AutoDNA — {kind} Fuel Performance"
+            stat  = (f"potential savings: {getattr(d, 'total_savings_l', 0.0):.3f} L "
+                     f"vs your records")
         else:
-            rows = (f"<b style='font-size:10px;color:#555'>Background = Hill</b><br>"
-                    f"{_sw('#9e9e9e')}Flat&nbsp;{_sw('#2e7d32')}Uphill&nbsp;"
-                    f"{_sw('#6a1b9a')}Downhill<br>"
-                    f"<b style='font-size:10px;color:#555'>Foreground = Turn</b><br>"
-                    f"{_sw('#9e9e9e')}Straight&nbsp;{_sw('#1565c0')}Left&nbsp;"
-                    f"{_sw('#e65100')}Right")
+            rows  = (
+                f"<b style='font-size:10px;color:#555'>Background = Hill</b><br>"
+                f"{_swatch('#9e9e9e')}Flat&nbsp;"
+                f"{_swatch('#2e7d32')}Uphill&nbsp;"
+                f"{_swatch('#6a1b9a')}Downhill<br>"
+                f"<b style='font-size:10px;color:#555'>Foreground = Turn</b><br>"
+                f"{_swatch('#9e9e9e')}Straight&nbsp;"
+                f"{_swatch('#1565c0')}Left&nbsp;"
+                f"{_swatch('#e65100')}Right"
+            )
             title = "AutoDNA — Combined"
+            stat  = f"Turns: {n_turns} · Hills: {n_hills} GPS pts"
 
-        view_lbl = "merged" if merged else "per-window"
+        filter_label = "short-event filter ON" if merged else "no short-event filter"
+        #vstavi legendu kot fiksni html element v spodnjem levem kotu karte
         legend = f"""
         <div style="position:fixed;bottom:24px;left:24px;z-index:9999;
                     background:white;padding:10px 14px;border-radius:6px;
@@ -556,21 +725,27 @@ class MapWidget(QWidget):
           {rows}<br>
           <hr style="margin:6px 0">
           <span style="font-size:10px;color:#888">
-            {n_vis} {'segments' if merged else 'windows'} &bull; {view_lbl}<br>
-            smoothed &plusmn;{smooth_h} &bull; click for details
+            {N} GPS pts &bull; GPS-only detection<br>
+            {filter_label}<br>
+            {stat}<br>
+            click event for details
           </span>
         </div>
         """
         fmap.get_root().html.add_child(folium.Element(legend))
 
-        # ── Save → load ───────────────────────────────────────────────────────
-        if self._tmp_path and os.path.exists(self._tmp_path):
-            try:
-                os.unlink(self._tmp_path)
-            except OSError:
-                pass
-        fd, tmp = tempfile.mkstemp(suffix='.html')
-        os.close(fd)
+        """cache_dir = get_data_dir()
+        tmp = str(cache_dir / 'current_map.html')
         fmap.save(tmp)
         self._tmp_path = tmp
-        self.webview.setUrl(QUrl.fromLocalFile(tmp))
+        self.webview.setUrl(QUrl.fromLocalFile(tmp))"""
+        
+        import io
+        html_content = io.BytesIO()
+        fmap.save(html_content, close_file=False)
+        html_str = html_content.getvalue().decode('utf-8')
+        
+        # load HTML directly — no file system involved
+        self.webview.setHtml(html_str, QUrl("http://localhost/"))
+        
+    

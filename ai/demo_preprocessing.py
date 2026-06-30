@@ -19,8 +19,10 @@ WINDOW_SIZE = 5
 CUTOFF = 5.0
 FILTER_ORDER = 4
 
-DATA_FILE = Path(__file__).with_name("LOG009.npz")
-OUTPUT_FILE = Path(__file__).with_name("LOG009_preprocessed.npz")
+#DATA_FILE = (Path(__file__).parent / "../data/training_data/parsed_data/LOG010.npz").resolve()
+
+DATA_FILE = Path(__file__).with_name("LOG010.npz")
+OUTPUT_FILE = Path(__file__).with_name("LOG010_preprocessed.npz")
 
 
 def _to_seconds(ts):

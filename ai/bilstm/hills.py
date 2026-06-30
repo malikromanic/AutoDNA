@@ -48,12 +48,19 @@ def load_sample(filepath):
     if mx > mn:
         acc_y_spec = (acc_y_spec - mn) / (mx - mn)
             
+    
+    acc_x_spec = acc[:, :, 0].T  # green channel = Y axis
+    
+    mn, mx = acc_x_spec.min(), acc_x_spec.max()
+    if mx > mn:
+        acc_x_spec = (acc_x_spec - mn) / (mx - mn)
+        
     #max_abs = np.abs(gyro_y_mean).max()
     #if max_abs > 0:
         #gyro_y_mean = gyro_y_mean / max_abs
 
     #x = np.concatenate([gyro_y_spec, gyro_y_mean.reshape(-1, 1)], axis=1)
-    x = np.concatenate([gyro_y_spec, acc_y_spec], axis=1)
+    x = np.concatenate([gyro_y_spec, acc_y_spec, acc_x_spec], axis=1)
 
     return torch.tensor(x), torch.tensor(y)
 
@@ -257,7 +264,7 @@ def evaluate(model, val_files):
 
 
 def main():
-    sample_files = sorted(Path('../input_data').glob('*_training.npz'))
+    sample_files = sorted(Path('../input_data_flipped').glob('*_training.npz'))
     
     mode = 2 
     

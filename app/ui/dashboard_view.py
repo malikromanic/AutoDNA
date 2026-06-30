@@ -1,6 +1,9 @@
-# ============================================================================
-# Dashboard View - Overview with metrics, map, and AI insights
-# ============================================================================
+"""Dashboard page: metric cards, the route map, and the Drive Summary panel.
+
+This is the page shown right after a drive loads
+(:meth:`~app.autodna_app.AutoDNAApplication._load_drive` calls
+:meth:`DashboardView.set_drive_data`).
+"""
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QGridLayout, QScrollArea
@@ -9,14 +12,41 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 import numpy as np
 
-try:
-    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas  # noqa: F401
-    from matplotlib.figure import Figure  # noqa: F401
-    HAS_MATPLOTLIB = True
-except ImportError:
-    HAS_MATPLOTLIB = False
+from AutoDNA.app.ui.map_widget import MapWidget
 
-from app.ui.map_widget import MapWidget
+
+# ── Segment helpers (a "segment" is a run of the same non-zero class) ────────
+def _count_segments(preds) -> int:
+    """Count how many separate non-zero runs occur in a per-point class array."""
+    preds = np.asarray(preds)
+    n, prev = 0, 0
+    for v in preds:
+        if v != 0 and v != prev:
+            n += 1
+        prev = int(v)
+    return n
+
+
+def _class_segments(preds, value):
+    """Yield (start, end) index ranges where preds == value (consecutive)."""
+    preds = np.asarray(preds)
+    i, N = 0, len(preds)
+    while i < N:
+        if preds[i] == value:
+            start = i
+            while i < N and preds[i] == value:
+                i += 1
+            yield start, i - 1
+        else:
+            i += 1
+
+
+def _longest_segment_m(preds, cum_distance_m, value) -> float:
+    """Length in metres of the longest run where ``preds == value``."""
+    best = 0.0
+    for s, e in _class_segments(preds, value):
+        best = max(best, float(cum_distance_m[e] - cum_distance_m[s]))
+    return best
 
 
 class MetricCard(QFrame):
@@ -64,7 +94,7 @@ class MetricCard(QFrame):
 
 
 class DashboardView(QWidget):
-    """Dashboard - overview metrics, route map, and AI insights summary."""
+    """Dashboard — overview metrics, route map, and GPS analysis summary."""
 
     def __init__(self):
         super().__init__()
@@ -94,29 +124,29 @@ class DashboardView(QWidget):
         title.setFont(title_font)
         layout.addWidget(title)
 
-        subtitle = QLabel("Drive overview and AI analysis summary")
+        subtitle = QLabel("Drive overview and GPS analysis summary")
         subtitle.setStyleSheet("color: #888888; font-size: 12px;")
         layout.addWidget(subtitle)
 
         # --- Metric cards row ---
         cards_layout = QHBoxLayout()
         cards_layout.setSpacing(12)
+        
+        self.savings_card = MetricCard("Potential Savings", "—", "based on previous records", "#16a085")
+        self.distance_card = MetricCard("Distance", "—", "", "#0066cc")
+        self.duration_card = MetricCard("Duration", "—", "", "#8e44ad")
+        self.events_card = MetricCard("Detected Events", "—", "turns + hills", "#e67e22")
 
-        self.safety_card = MetricCard("Overall Safety Score", "—", "/ 100", "#27ae60")
-        self.distance_card = MetricCard("Distance", "—", "km", "#0066cc")
-        self.duration_card = MetricCard("Duration", "—", "minutes", "#8e44ad")
-        self.events_card = MetricCard("AI Events", "—", "detected", "#e67e22")
-
-        for card in [self.safety_card, self.distance_card, self.duration_card, self.events_card]:
+        for card in [self.savings_card, self.distance_card, self.duration_card,
+                     self.events_card]:
             cards_layout.addWidget(card)
 
         layout.addLayout(cards_layout)
 
-        # --- Map + AI summary row ---
+        # --- Map + summary row ---
         content_row = QHBoxLayout()
         content_row.setSpacing(12)
 
-        # Map (left 60%)
         map_frame = QFrame()
         map_frame.setStyleSheet("""
             QFrame {
@@ -133,24 +163,20 @@ class DashboardView(QWidget):
         map_frame_layout.addWidget(map_title)
 
         self.map_widget = MapWidget()
-        self.map_widget.setMinimumHeight(350)
+        self.map_widget.setMinimumHeight(480)
         map_frame_layout.addWidget(self.map_widget)
 
-        content_row.addWidget(map_frame, 3)
+        content_row.addWidget(map_frame, 4)
 
-        # AI Summary (right 40%)
-        self.ai_summary_frame = self._build_ai_summary()
-        content_row.addWidget(self.ai_summary_frame, 2)
+        #desna ploscica s statistiko voznje
+        self.stats_frame = self._build_summary()
+        content_row.addWidget(self.stats_frame, 1)
 
         layout.addLayout(content_row)
 
-        # --- Category scores bar ---
-        self.scores_frame = self._build_scores_frame()
-        layout.addWidget(self.scores_frame)
-
         layout.addStretch()
 
-    def _build_ai_summary(self) -> QFrame:
+    def _build_summary(self) -> QFrame:
         frame = QFrame()
         frame.setStyleSheet("""
             QFrame {
@@ -164,24 +190,25 @@ class DashboardView(QWidget):
         layout.setSpacing(8)
 
         title = QLabel("Drive Summary")
+        title.setStyleSheet("color: #000000")
         title_font = QFont()
         title_font.setPointSize(13)
         title_font.setBold(True)
         title.setFont(title_font)
         layout.addWidget(title)
 
-        self.ai_insights_label = QLabel("Load a drive to see AI analysis.")
+        self.ai_insights_label = QLabel("Load a drive to see the analysis.")
         self.ai_insights_label.setWordWrap(True)
         self.ai_insights_label.setStyleSheet("color: #555555; font-size: 11px; line-height: 1.5;")
         layout.addWidget(self.ai_insights_label)
 
-        # ── Turn Detections ───────────────────────────────────────────────────
+        # ── Turn Detections ──────────────────────────────────────────────────
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet("color: #e0e0e0;")
         layout.addWidget(sep)
 
-        turns_title = QLabel("Turn Detections")
+        turns_title = QLabel("Turns (GPS heading)")
         turns_title.setStyleSheet("font-weight: bold; font-size: 11px; color: #1565c0;")
         layout.addWidget(turns_title)
 
@@ -189,7 +216,6 @@ class DashboardView(QWidget):
         self.turn_grid.setSpacing(4)
         layout.addLayout(self.turn_grid)
 
-        # Placeholders filled by set_drive_data
         self._turn_rows: dict[str, QLabel] = {}
         for key in ["Left Turns", "Right Turns", "Longest Turn"]:
             k = QLabel(f"{key}:")
@@ -201,13 +227,13 @@ class DashboardView(QWidget):
             self.turn_grid.addWidget(v, r, 1)
             self._turn_rows[key] = v
 
-        # ── Hill Detections ───────────────────────────────────────────────────
+        # ── Hill Detections ──────────────────────────────────────────────────
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.Shape.HLine)
         sep2.setStyleSheet("color: #e0e0e0;")
         layout.addWidget(sep2)
 
-        hills_title = QLabel("Hill Detections")
+        hills_title = QLabel("Hills (DEM grade)")
         hills_title.setStyleSheet("font-weight: bold; font-size: 11px; color: #2e7d32;")
         layout.addWidget(hills_title)
 
@@ -216,7 +242,7 @@ class DashboardView(QWidget):
         layout.addLayout(self.hill_grid)
 
         self._hill_rows: dict[str, QLabel] = {}
-        for key in ["Uphill Segments", "Downhill Segments", "Longest Hill"]:
+        for key in ["Uphill Segments", "Downhill Segments", "Elevation Gain", "Longest Hill"]:
             k = QLabel(f"{key}:")
             k.setStyleSheet("font-size: 11px; color: #555;")
             v = QLabel("—")
@@ -226,182 +252,95 @@ class DashboardView(QWidget):
             self.hill_grid.addWidget(v, r, 1)
             self._hill_rows[key] = v
 
-        # ── Models ────────────────────────────────────────────────────────────
+        # ── Sources ──────────────────────────────────────────────────────────
         sep3 = QFrame()
         sep3.setFrameShape(QFrame.Shape.HLine)
         sep3.setStyleSheet("color: #e0e0e0;")
         layout.addWidget(sep3)
 
-        models_title = QLabel("Models")
-        models_title.setStyleSheet("font-weight: bold; font-size: 11px; color: #333;")
-        layout.addWidget(models_title)
+        sources_title = QLabel("Sources")
+        sources_title.setStyleSheet("font-weight: bold; font-size: 11px; color: #333;")
+        layout.addWidget(sources_title)
 
-        for model, status in [("XGBoost Turn", "Active"), ("XGBoost Hill", "Active")]:
+        self._source_rows: dict[str, QLabel] = {}
+        for source in ["Turns", "Hills"]:
             row = QHBoxLayout()
-            m_label = QLabel(model)
+            m_label = QLabel(source)
             m_label.setStyleSheet("font-size: 11px; color: #555;")
-            s_label = QLabel(f"✓ {status}")
+            s_label = QLabel("—")
             s_label.setStyleSheet("font-size: 11px; color: #27ae60; font-weight: bold;")
             row.addWidget(m_label)
             row.addStretch()
             row.addWidget(s_label)
             layout.addLayout(row)
+            self._source_rows[source] = s_label
 
         layout.addStretch()
         return frame
 
-    def _build_scores_frame(self) -> QFrame:
-        frame = QFrame()
-        frame.setStyleSheet("""
-            QFrame {
-                background-color: #ffffff;
-                border: 1px solid #e0e0e0;
-                border-radius: 8px;
-            }
-        """)
-        layout = QHBoxLayout(frame)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(24)
 
-        title = QLabel("Category Scores:")
-        title.setStyleSheet("font-weight: bold; font-size: 12px; color: #333;")
-        layout.addWidget(title)
-
-        self.cat_labels = {}
-        for cat in ["Acceleration", "Cornering", "Braking", "Steering"]:
-            cat_layout = QVBoxLayout()
-            cat_layout.setSpacing(2)
-            name = QLabel(cat)
-            name.setStyleSheet("font-size: 10px; color: #666; text-align: center;")
-            name.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            score = QLabel("—")
-            score.setStyleSheet("font-size: 16px; font-weight: bold; color: #0066cc;")
-            score.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            cat_layout.addWidget(name)
-            cat_layout.addWidget(score)
-            layout.addLayout(cat_layout)
-            self.cat_labels[cat] = score
-
-        layout.addStretch()
-        return frame
-
+    # ── Data update ──────────────────────────────────────────────────────────
     def set_drive_data(self, drive_data):
+        """Refresh the metric cards, map, and Drive Summary panel for a newly loaded drive."""
         self.drive_data = drive_data
         self._update_metric_cards()
         self.map_widget.set_drive_data(drive_data)
-        self._update_ai_insights()
-        self._update_category_scores()
+        self._update_insights()
 
     def _update_metric_cards(self):
         d = self.drive_data
-
-        self.distance_card.set_value(f"{d.drive_distance_km:.1f}")
+        self.distance_card.set_value(f"{d.drive_distance_km:.1f} km")
 
         duration_min = d.drive_duration_sec / 60
-        self.duration_card.set_value(f"{duration_min:.1f}")
+        self.duration_card.set_value(f"{duration_min:.1f} min")
 
         events = self._count_events()
         self.events_card.set_value(str(events))
 
-        # Safety score: start at 100, subtract for event density
-        event_density = events / max(duration_min, 1)
-        safety = max(55, min(100, int(100 - event_density * 6)))
-        color = "#27ae60" if safety >= 85 else "#e67e22" if safety >= 70 else "#e74c3c"
-        self.safety_card.set_value(str(safety), color)
+        # potential fuel saved vs the per-vehicle records (lower = more efficient)
+        savings = float(getattr(d, "total_savings_l", 0.0))
+        s_color = "#27ae60" if savings <= 0.05 else "#e67e22" if savings <= 0.3 else "#e74c3c"
+        self.savings_card.set_value(f"{savings:.2f} L", s_color)
 
-    def _update_ai_insights(self):
+    def _update_insights(self):
         d = self.drive_data
-        tp = d.xgb_turn_preds   # (M,) 0=none 1=left 2=right
-        hp = d.xgb_hill_preds   # (M,) 0=none 1=up   2=down
-        M  = len(tp)
+        tp, hp = d.turn_preds, d.hill_preds
 
-        left_count  = int((tp == 1).sum())
-        right_count = int((tp == 2).sum())
-        up_count    = int((hp == 1).sum())
-        down_count  = int((hp == 2).sum())
-        avg_turn_conf = float(d.xgb_turn_proba.max(axis=1).mean())
-        avg_hill_conf = float(d.xgb_hill_proba.max(axis=1).mean())
+        left_seg  = _count_segments(np.where(tp == 1, 1, 0))
+        right_seg = _count_segments(np.where(tp == 2, 2, 0))
+        up_seg    = _count_segments(np.where(hp == 1, 1, 0))
+        down_seg  = _count_segments(np.where(hp == 2, 2, 0))
 
-        window_dur_s = d.window_size / d.target_fs
         insights_html = (
-            f"Analyzed <b>{M}</b> windows "
-            f"({window_dur_s:.1f}s each) with XGBoost.<br>"
-            f"Turn conf avg: <b>{avg_turn_conf:.1%}</b> &nbsp;"
-            f"Hill conf avg: <b>{avg_hill_conf:.1%}</b>"
+            f"Analyzed <b>{d.n_points}</b> GPS points over "
+            f"<b>{d.drive_distance_km:.1f} km</b>.<br>"
+            f"Turns from heading change &bull; hills from DEM grade.<br>"
+            f"Max grade: <b>{np.abs(d.grade_pct).max():.1f}%</b>"
         )
         self.ai_insights_label.setText(insights_html)
         self.ai_insights_label.setTextFormat(Qt.TextFormat.RichText)
 
-        # ── Longest run helpers ───────────────────────────────────────────────
-        def _longest_run_win(preds, val):
-            """Length in windows of the longest consecutive run of preds==val."""
-            best = cur = 0
-            for p in preds:
-                if p == val:
-                    cur += 1
-                    best = max(best, cur)
-                else:
-                    cur = 0
-            return best
+        longest_turn = _longest_segment_m(np.where(tp != 0, 1, 0), d.cum_distance_m, 1)
+        longest_hill = _longest_segment_m(np.where(hp != 0, 1, 0), d.cum_distance_m, 1)
 
-        def _longest_seg_win(preds, nonzero=True):
-            """Longest consecutive run of any non-zero value."""
-            best = cur = 0
-            for p in preds:
-                if (p != 0) if nonzero else (p == 0):
-                    cur += 1
-                    best = max(best, cur)
-                else:
-                    cur = 0
-            return best
-
-        longest_turn_s = _longest_seg_win(tp) * window_dur_s
-        longest_hill_s = _longest_seg_win(hp) * window_dur_s
-
-        # ── Update turn summary rows ──────────────────────────────────────────
-        self._turn_rows["Left Turns"].setText(
-            f"{left_count} windows ({left_count * window_dur_s:.0f}s)"
-        )
-        self._turn_rows["Right Turns"].setText(
-            f"{right_count} windows ({right_count * window_dur_s:.0f}s)"
-        )
+        self._turn_rows["Left Turns"].setText(f"{left_seg}")
+        self._turn_rows["Right Turns"].setText(f"{right_seg}")
         self._turn_rows["Longest Turn"].setText(
-            f"{longest_turn_s:.0f}s" if longest_turn_s > 0 else "none"
+            f"{longest_turn:.0f} m" if longest_turn > 0 else "none"
         )
 
-        # ── Update hill summary rows ──────────────────────────────────────────
-        self._hill_rows["Uphill Segments"].setText(
-            f"{up_count} windows ({up_count * window_dur_s:.0f}s)"
-        )
-        self._hill_rows["Downhill Segments"].setText(
-            f"{down_count} windows ({down_count * window_dur_s:.0f}s)"
+        self._hill_rows["Uphill Segments"].setText(f"{up_seg}")
+        self._hill_rows["Downhill Segments"].setText(f"{down_seg}")
+        self._hill_rows["Elevation Gain"].setText(
+            f"+{d.elevation_gain_m:.0f} / -{d.elevation_loss_m:.0f} m"
         )
         self._hill_rows["Longest Hill"].setText(
-            f"{longest_hill_s:.0f}s" if longest_hill_s > 0 else "none"
+            f"{longest_hill:.0f} m" if longest_hill > 0 else "none"
         )
 
-    def _update_category_scores(self):
-        d = self.drive_data
-        duration_min = d.drive_duration_sec / 60
-        turn_rate = self._count_events() / max(duration_min, 1)
-
-        # Derive scores from IMU signal (cols 3-5=accel, cols 0-2=gyro)
-        accel_mag = float(np.sqrt((d.imu_signal[:, 3:6] ** 2).sum(axis=1)).mean())
-        gyro_mag  = float(np.sqrt((d.imu_signal[:, 0:3] ** 2).sum(axis=1)).mean())
-
-        scores = {
-            "Acceleration": max(70, min(99, int(100 - accel_mag * 3))),
-            "Cornering":    max(70, min(99, int(100 - gyro_mag * 20 - turn_rate * 2))),
-            "Braking":      max(70, min(99, int(94 - accel_mag * 1.5))),
-            "Steering":     max(70, min(99, int(100 - gyro_mag * 15))),
-        }
-        for cat, score in scores.items():
-            color = "#27ae60" if score >= 90 else "#e67e22" if score >= 75 else "#e74c3c"
-            self.cat_labels[cat].setText(str(score))
-            self.cat_labels[cat].setStyleSheet(
-                f"font-size: 16px; font-weight: bold; color: {color};"
-            )
+        self._source_rows["Turns"].setText("GPS heading")
+        self._source_rows["Hills"].setText(d.elevation_source)
 
     def _count_events(self) -> int:
         d = self.drive_data
-        return int((d.xgb_turn_preds != 0).sum() + (d.xgb_hill_preds != 0).sum())
+        return _count_segments(d.turn_preds) + _count_segments(d.hill_preds)

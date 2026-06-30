@@ -1,287 +1,250 @@
+"""Parses a drive folder's GPS/OBD2 CSV into a :class:`DriveData` object.
+
+Everything here is derived from the CSV alone — no IMU, no ML:
+
+* Turns are detected from GPS heading change (:func:`app.gps_analysis.compute_turns`).
+* Hills are detected from DEM ground-elevation grade (:func:`app.gps_analysis.compute_hills`).
+
+The device's own GPS altitude column is intentionally ignored — elevation is
+looked up from a DEM (online EU-DEM 25 m, Copernicus GLO-90 fallback) via
+:mod:`app.elevation`.
+"""
+
+from __future__ import annotations
+
 import math
+from dataclasses import dataclass, field
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from dataclasses import dataclass
 
-from app.ai_pipeline import (
-    parse_and_preprocess_bin,
-    make_windows,
-    predict_windows,
-    WINDOW_SIZE,
-    STRIDE,
-    TARGET_FS,
+from AutoDNA.app.elevation import ElevationProvider, get_default_provider
+from AutoDNA.app.gps_analysis import (
+    cumulative_distance,
+    compute_turns,
+    compute_hills,
+    elevation_gain_loss,
 )
-
-# Temporal smoothing: majority vote over ±N windows  (0 = disabled)
-SMOOTH_HALF_WINDOW = 2
 
 
 @dataclass
 class DriveData:
-    """Complete drive session — real IMU predictions mapped to real GPS."""
+    """A complete drive session, fully derived from GPS + DEM."""
 
     # GPS track (deduplicated, movement-filtered)
-    gps_timestamps: np.ndarray      # (N,)  absolute seconds
-    gps_lat:        np.ndarray      # (N,)
-    gps_lon:        np.ndarray      # (N,)
-    gps_speed:      np.ndarray      # (N,)  km/h
-    gps_heading:    np.ndarray      # (N,)  degrees 0-360
+    gps_timestamps: np.ndarray   # (N,)  seconds from start (0-indexed)
+    gps_lat:        np.ndarray   # (N,)
+    gps_lon:        np.ndarray   # (N,)
+    gps_speed:      np.ndarray   # (N,)  km/h
+    gps_heading:    np.ndarray   # (N,)  degrees 0-360
+    cum_distance_m: np.ndarray   # (N,)  cumulative metres
 
-    # IMU signal preprocessed at 50 Hz, timestamps relative (0 = recording start)
-    imu_timestamps: np.ndarray      # (K,)
-    imu_signal:     np.ndarray      # (K, 9)  [gyro_xyz | accel_xyz | mag_xyz]
+    # Elevation / grade (from DEM, NOT device altitude)
+    elevation_m:    np.ndarray   # (N,)  raw DEM elevation
+    elevation_sm:   np.ndarray   # (N,)  smoothed elevation used for grades
+    grade_pct:      np.ndarray   # (N,)  signed road grade %
 
-    # XGBoost predictions (smoothed) — one element per 100-sample / 2-second window
-    xgb_turn_preds:     np.ndarray  # (M,)  int32   0=none 1=left 2=right  (smoothed)
-    xgb_hill_preds:     np.ndarray  # (M,)  int32   0=none 1=up   2=down   (smoothed)
-    xgb_turn_proba:     np.ndarray  # (M, 3) float32  class probabilities
-    xgb_hill_proba:     np.ndarray  # (M, 3) float32
-
-    # Raw (unsmoothed) predictions for diagnostics
-    xgb_turn_preds_raw: np.ndarray  # (M,)  int32  before smoothing
-    xgb_hill_preds_raw: np.ndarray  # (M,)  int32  before smoothing
-
-    # GPS index range covered by each prediction window
-    window_gps_start_idx:  np.ndarray  # (M,) int32
-    window_gps_end_idx:    np.ndarray  # (M,) int32
-    window_gps_center_idx: np.ndarray  # (M,) int32  — center-time GPS position
+    # Per-point event classes (one element per GPS point)
+    turn_preds:     np.ndarray   # (N,) int32  0=straight 1=left 2=right
+    hill_preds:     np.ndarray   # (N,) int32  0=flat 1=uphill 2=downhill
+    turn_conf:      np.ndarray   # (N,) float  0..1
+    hill_conf:      np.ndarray   # (N,) float  0..1
+    turn_rate:      np.ndarray   # (N,) float  signed heading change (deg)
 
     # Metadata
-    bin_file:          str
-    gps_file:          str
-    drive_name:        str
+    gps_file:           str
+    drive_name:         str
     drive_duration_sec: float
     drive_distance_km:  float
-    window_size:       int           # 100
-    window_stride:     int           # 25  (overlapping)
-    target_fs:         int           # 50
-    smooth_half:       int           # smoothing half-window used
+    elevation_gain_m:   float
+    elevation_loss_m:   float
+    elevation_source:   str
+    avg_fuel_l100km: float
+    fuel_consumption_l: float
+    fuel_rate_l_s:   np.ndarray   # (N,)  instant fuel rate per GPS point (L/s)
+
+    # ── Per-segment fuel records (filled by segment_records.evaluate_drive) ──
+    turn_perf:         np.ndarray | None = None  # (N,) 0=none 1=record 2=close 3=worse
+    hill_perf:         np.ndarray | None = None  # (N,) 0=none 1=record 2=close 3=worse
+    total_savings_l:   float = 0.0               # potential fuel saved vs records
+    savings_breakdown: list = field(default_factory=list)  # per-segment detail dicts
+    vehicle:           str = "default"
+
+    @property
+    def n_points(self) -> int:
+        return len(self.gps_lat)
 
 
 class DriveDataLoader:
     """
-    Open a drive directory containing exactly one .BIN and one .csv file.
-    Runs the real AutoDNA pipeline and returns a DriveData instance.
+    Open a drive directory containing a GPS/OBD2 `.csv` and produce DriveData.
+
+    A `.BIN` (IMU) file may also be present but is ignored — the IMU pipeline
+    now lives outside the app.
     """
 
-    def __init__(self, drive_dir: Path):
+    def __init__(self, drive_dir: Path, provider: ElevationProvider | None = None):
         self.drive_dir = Path(drive_dir)
+        self.provider = provider or get_default_provider()
 
-    def load_drive(self) -> DriveData:
-        bin_path, csv_path = self._find_files()
+    def load_drive(self, progress_cb=None) -> DriveData:
+        """Parse the drive's CSV and run turn/hill detection on it.
 
-        # ── Step 1: IMU pipeline ─────────────────────────────────────────────
-        print(f"[AutoDNA] Parsing BIN: {bin_path.name}")
-        signal, imu_ts = parse_and_preprocess_bin(bin_path)
-        print(f"          signal {signal.shape}  duration {imu_ts[-1]:.1f}s")
+        Args:
+            progress_cb: Optional callable invoked with a short status
+                string at each stage (CSV parsing, elevation lookup,
+                detection), used by the UI to update the status bar.
 
-        windows, start_samples = make_windows(signal)
-        M = len(windows)
-        print(f"          {M} windows x {WINDOW_SIZE} samples")
+        Returns:
+            DriveData: The fully populated drive, ready for display and
+            for :func:`app.segment_records.evaluate_drive`.
 
-        print("[AutoDNA] Running XGBoost inference...")
-        turn_preds_raw, hill_preds_raw, turn_proba, hill_proba = predict_windows(windows)
+        Raises:
+            FileNotFoundError: No ``.csv`` file exists in ``drive_dir``.
+            ValueError: The CSV has fewer than two distinct GPS fixes.
+        """
+        def _log(msg):
+            print(f"[AutoDNA] {msg}")
+            if progress_cb:
+                progress_cb(msg)
 
-        print(f"          raw turn: {np.bincount(turn_preds_raw, minlength=3).tolist()}")
-        print(f"          raw hill: {np.bincount(hill_preds_raw, minlength=3).tolist()}")
+        csv_path = self._find_csv()
 
-        # ── Step 2: Temporal smoothing ───────────────────────────────────────
-        turn_preds = _smooth_preds(turn_preds_raw, SMOOTH_HALF_WINDOW)
-        hill_preds = _smooth_preds(hill_preds_raw, SMOOTH_HALF_WINDOW)
-        print(f"          smoothed (+-{SMOOTH_HALF_WINDOW}) turn: {np.bincount(turn_preds, minlength=3).tolist()}")
-        print(f"          smoothed (+-{SMOOTH_HALF_WINDOW}) hill: {np.bincount(hill_preds, minlength=3).tolist()}")
+        # ── GPS track ────────────────────────────────────────────────────────
+        _log(f"Loading GPS: {csv_path.name}")
+        ts, lat, lon, speed, heading = self._load_gps(csv_path)
+        cum = cumulative_distance(lat, lon)
+        _log(f"{len(lat)} GPS points, {cum[-1]:.0f} m")
 
-        # ── Step 3: GPS track ────────────────────────────────────────────────
-        gps_ts, gps_lat, gps_lon, gps_speed, gps_heading = self._load_gps(csv_path)
-        print(f"[AutoDNA] GPS {len(gps_lat)} points  span {gps_ts[-1]-gps_ts[0]:.0f}s")
+        # ── Turns (heading) ──────────────────────────────────────────────────
+        turn_preds, turn_conf, turn_rate = compute_turns(heading, cum)
+        _log(f"Turns straight/left/right: {np.bincount(turn_preds, minlength=3).tolist()}")
 
-        # ── Step 4: Align windows → GPS ──────────────────────────────────────
-        win_start_idx, win_end_idx, win_center_idx = self._align_to_gps(
-            imu_ts, start_samples, gps_ts
-        )
+        # ── Hills (DEM grade) ────────────────────────────────────────────────
+        _log(f"Looking up elevation via {self.provider.name}…")
+        elev = self.provider.elevations(lat, lon)
+        n_missing = int(np.isnan(elev).sum())
+        if n_missing == len(elev):
+            _log("Elevation unavailable (offline?) — hills disabled for this drive.")
+            source = f"{self.provider.name} (unavailable)"
+        else:
+            source = self.provider.name
+            if n_missing:
+                _log(f"{n_missing}/{len(elev)} points missing elevation (interpolated).")
+        hill_preds, hill_conf, grade, elev_sm = compute_hills(elev, cum)
+        gain, loss = elevation_gain_loss(elev_sm)
+        _log(f"Hills flat/up/down: {np.bincount(hill_preds, minlength=3).tolist()}  "
+             f"(+{gain:.0f}/-{loss:.0f} m)")
 
-        # ── Debug: print alignment for first 10 windows ──────────────────────
-        print(f"\n[AutoDNA] {M} windows (stride={STRIDE})  — alignment (first 10):")
-        print(f"  {'W':>4}  {'t0':>6}  {'t1':>6}  {'ic':>5}  {'lat':>10}  {'lon':>11}  turn  hill")
-        for w in range(min(10, M)):
-            s   = int(start_samples[w])
-            e   = min(s + WINDOW_SIZE - 1, len(imu_ts) - 1)
-            ic  = int(win_center_idx[w])
-            lat = gps_lat[ic] if ic < len(gps_lat) else float('nan')
-            lon = gps_lon[ic] if ic < len(gps_lon) else float('nan')
-            tl  = ['N', 'L', 'R'][int(turn_preds[w])]
-            hl  = ['N', 'U', 'D'][int(hill_preds[w])]
-            print(f"  {w:>4}  {imu_ts[s]:>6.1f}  {imu_ts[e]:>6.1f}  {ic:>5}  {lat:>10.5f}  {lon:>11.5f}   {tl}     {hl}")
+        df_full = pd.read_csv(csv_path, sep=";", quotechar='"')
+        df_full.columns = df_full.columns.str.lower().str.strip()
+        df_full['seconds'] = pd.to_numeric(df_full['seconds'], errors='coerce')
 
-        print(f"\n[AutoDNA] turn dist (smo): {np.bincount(turn_preds, minlength=3).tolist()}")
-        print(f"          hill dist (smo): {np.bincount(hill_preds, minlength=3).tolist()}")
+        dist_km  = cum[-1] / 1000.0
+        fuel_l   = _extract_fuel_l(df_full, dist_km)
+        avg_l100 = (fuel_l / dist_km * 100.0) if dist_km > _MIN_DIST_KM_FOR_AVG else 0.0
+        fuel_rate = _fuel_rate_per_point(df_full, ts, fuel_l)
 
         return DriveData(
-            gps_timestamps=gps_ts,
-            gps_lat=gps_lat,
-            gps_lon=gps_lon,
-            gps_speed=gps_speed,
-            gps_heading=gps_heading,
-            imu_timestamps=imu_ts,
-            imu_signal=signal,
-            xgb_turn_preds=turn_preds,
-            xgb_hill_preds=hill_preds,
-            xgb_turn_proba=turn_proba,
-            xgb_hill_proba=hill_proba,
-            xgb_turn_preds_raw=turn_preds_raw,
-            xgb_hill_preds_raw=hill_preds_raw,
-            window_gps_start_idx=win_start_idx,
-            window_gps_end_idx=win_end_idx,
-            window_gps_center_idx=win_center_idx,
-            bin_file=str(bin_path),
+            gps_timestamps=ts,
+            gps_lat=lat,
+            gps_lon=lon,
+            gps_speed=speed,
+            gps_heading=heading,
+            cum_distance_m=cum,
+            elevation_m=elev,
+            elevation_sm=elev_sm,
+            grade_pct=grade,
+            turn_preds=turn_preds,
+            hill_preds=hill_preds,
+            turn_conf=turn_conf,
+            hill_conf=hill_conf,
+            turn_rate=turn_rate,
             gps_file=str(csv_path),
-            drive_name=bin_path.stem,
-            drive_duration_sec=float(imu_ts[-1]),
-            drive_distance_km=_haversine_total(gps_lat, gps_lon),
-            window_size=WINDOW_SIZE,
-            window_stride=STRIDE,
-            target_fs=TARGET_FS,
-            smooth_half=SMOOTH_HALF_WINDOW,
+            drive_name=csv_path.stem,
+            drive_duration_sec=float(ts[-1] - ts[0]),
+            drive_distance_km=cum[-1] / 1000.0,
+            elevation_gain_m=gain,
+            elevation_loss_m=loss,
+            elevation_source=source,
+            avg_fuel_l100km=avg_l100,
+            fuel_consumption_l=fuel_l,
+            fuel_rate_l_s=fuel_rate,
         )
 
-    # ── File discovery ────────────────────────────────────────────────────────
-    def _find_files(self):
-        bins = sorted(
-            list(self.drive_dir.glob('*.BIN')) +
-            list(self.drive_dir.glob('*.bin'))
-        )
-        csvs = sorted(self.drive_dir.glob('*.csv'))
-        if not bins:
-            raise FileNotFoundError(
-                f"No .BIN file found in {self.drive_dir}.\n"
-                "The folder must contain a .BIN file (STM32 IMU recording)."
-            )
+    # ── File discovery ──────────────────────────────────────────────────────
+    def _find_csv(self) -> Path:
+        csvs = sorted(self.drive_dir.glob("*.csv"))
         if not csvs:
             raise FileNotFoundError(
                 f"No .csv file found in {self.drive_dir}.\n"
-                "The folder must contain a .csv file (GPS/OBD2 log)."
+                "The folder must contain a GPS/OBD2 .csv log."
             )
-        return bins[0], csvs[0]
+        return csvs[0]
 
-    # ── GPS loading ───────────────────────────────────────────────────────────
+    # ── GPS loading ───────────────────────────────────────────────────────--
     def _load_gps(self, csv_path: Path):
-        df = pd.read_csv(csv_path, sep=';', quotechar='"')
+        """Reduce the raw OBD2 CSV to one GPS fix per second and a heading trace.
+
+        The CSV repeats every PID for every poll, so this collapses each
+        second to its first lat/lon reading, drops rows sitting on the
+        same rounded coordinate as the previous one (parked/stationary),
+        and derives speed and heading from what's left.
+        """
+        df = pd.read_csv(csv_path, sep=";", quotechar='"')
         df.columns = df.columns.str.lower().str.strip()
 
-        df['latitude']   = pd.to_numeric(df['latitude'],   errors='coerce')
-        df['longtitude'] = pd.to_numeric(df['longtitude'], errors='coerce')
-        df['seconds']    = pd.to_numeric(df['seconds'],    errors='coerce')
+        df["latitude"]   = pd.to_numeric(df["latitude"],   errors="coerce")
+        df["longtitude"] = pd.to_numeric(df["longtitude"], errors="coerce")
+        df["seconds"]    = pd.to_numeric(df["seconds"],    errors="coerce")
 
-        df = df.dropna(subset=['seconds', 'latitude', 'longtitude'])
-        df = df[(df['latitude'] != 0) & (df['longtitude'] != 0)]
-        df = df.sort_values('seconds').reset_index(drop=True)
+        df = df.dropna(subset=["seconds", "latitude", "longtitude"])
+        df = df[(df["latitude"] != 0) & (df["longtitude"] != 0)]
+        df = df.sort_values("seconds").reset_index(drop=True)
 
-        # One GPS position per timestamp (OBD2 CSV has 31 PIDs per timestamp)
+        # One GPS position per timestamp (OBD2 CSV repeats many PIDs per second)
         gps_df = (
-            df.groupby('seconds', sort=True)
+            df.groupby("seconds", sort=True)
               .first()
-              .reset_index()[['seconds', 'latitude', 'longtitude']]
+              .reset_index()[["seconds", "latitude", "longtitude"]]
         )
 
         # Drop stationary clusters
-        lat_r = gps_df['latitude'].round(6)
-        lon_r = gps_df['longtitude'].round(6)
+        lat_r = gps_df["latitude"].round(6)
+        lon_r = gps_df["longtitude"].round(6)
         gps_df = gps_df[(lat_r != lat_r.shift()) | (lon_r != lon_r.shift())].reset_index(drop=True)
 
         if len(gps_df) < 2:
             raise ValueError("Not enough GPS movement data in the CSV.")
 
-        ts  = gps_df['seconds'].values.astype(np.float64)
-        lat = gps_df['latitude'].values.astype(np.float64)
-        lon = gps_df['longtitude'].values.astype(np.float64)
+        ts  = gps_df["seconds"].values.astype(np.float64)
+        lat = gps_df["latitude"].values.astype(np.float64)
+        lon = gps_df["longtitude"].values.astype(np.float64)
 
-        speed_df = df[df['pid'].str.strip().isin(['Speed (GPS)', 'Vehicle speed'])].copy()
+        speed_df = df[df["pid"].str.strip().isin(["Speed (GPS)", "Vehicle speed"])].copy()
         speed    = _align_speed(speed_df, ts)
         heading  = _compute_heading(lat, lon)
 
         return ts, lat, lon, speed, heading
 
-    # ── Window → GPS alignment ────────────────────────────────────────────────
-    def _align_to_gps(self, imu_ts, start_samples, gps_ts):
-        """
-        Map each IMU prediction window to GPS indices.
 
-        Windows are overlapping (stride=25, size=100). Each window's center
-        sample time is used as the representative GPS position so that
-        adjacent overlapping windows map to incrementally different GPS points.
-
-        Linear mapping: IMU t=0 -> GPS t[0], IMU t=imu_dur -> GPS t[-1].
-        """
-        imu_dur = float(imu_ts[-1])
-        gps_dur = float(gps_ts[-1] - gps_ts[0])
-        n_gps   = len(gps_ts)
-        M       = len(start_samples)
-
-        win_start  = np.zeros(M, dtype=np.int32)
-        win_end    = np.zeros(M, dtype=np.int32)
-        win_center = np.zeros(M, dtype=np.int32)
-
-        for w in range(M):
-            s      = int(start_samples[w])
-            e      = min(s + WINDOW_SIZE - 1, len(imu_ts) - 1)
-            mid    = (s + e) // 2
-
-            t0  = float(imu_ts[s])
-            t1  = float(imu_ts[e])
-            t_c = float(imu_ts[mid])
-
-            if imu_dur > 0 and gps_dur > 0:
-                g0  = gps_ts[0] + (t0  / imu_dur) * gps_dur
-                g1  = gps_ts[0] + (t1  / imu_dur) * gps_dur
-                g_c = gps_ts[0] + (t_c / imu_dur) * gps_dur
-            else:
-                g0 = g1 = g_c = gps_ts[0]
-
-            i0 = max(0, min(int(np.searchsorted(gps_ts, g0, side='left')),  n_gps - 1))
-            i1 = max(0, min(int(np.searchsorted(gps_ts, g1, side='right')) - 1, n_gps - 1))
-            ic = max(0, min(int(np.searchsorted(gps_ts, g_c, side='left')), n_gps - 1))
-
-            i1 = max(i0, i1)
-
-            win_start[w]  = i0
-            win_end[w]    = i1
-            win_center[w] = ic
-
-        return win_start, win_end, win_center
-
-
-# ── Smoothing ─────────────────────────────────────────────────────────────────
-
-def _smooth_preds(preds: np.ndarray, half: int) -> np.ndarray:
-    """
-    Temporal majority vote over a sliding window of size (2*half + 1).
-    Each output label is the most common label among the ±half neighbors.
-    half=0 returns a copy of the input unchanged.
-    """
-    if half <= 0:
-        return preds.copy()
-    M = len(preds)
-    out = np.empty_like(preds)
-    for i in range(M):
-        lo = max(0, i - half)
-        hi = min(M, i + half + 1)
-        out[i] = np.bincount(preds[lo:hi], minlength=3).argmax()
-    return out.astype(np.int32)
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
+# ── Helpers ───────────────────────────────────────────────────────────────--
 def _align_speed(speed_df: pd.DataFrame, timestamps: np.ndarray) -> np.ndarray:
     if speed_df.empty:
         return np.zeros(len(timestamps), dtype=np.float32)
-    speed_df = speed_df.sort_values('seconds')
-    sp_ts  = speed_df['seconds'].values.astype(np.float64)
-    sp_val = pd.to_numeric(speed_df['value'], errors='coerce').fillna(0).values.astype(np.float64)
+    speed_df = speed_df.sort_values("seconds")
+    sp_ts  = speed_df["seconds"].values.astype(np.float64)
+    sp_val = pd.to_numeric(speed_df["value"], errors="coerce").fillna(0).values.astype(np.float64)
     return np.interp(timestamps, sp_ts, sp_val).astype(np.float32)
 
 
 def _compute_heading(lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+    """Compute initial bearing (0-360°) between consecutive GPS points.
+
+    Point 0 is given the same heading as point 1 since there's no
+    previous point to compute a bearing from.
+    """
     heading = np.zeros(len(lat))
     for i in range(1, len(lat)):
         dlon = math.radians(lon[i] - lon[i - 1])
@@ -295,15 +258,69 @@ def _compute_heading(lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
     return heading
 
 
-def _haversine_total(lat: np.ndarray, lon: np.ndarray) -> float:
-    R = 6371.0
-    total = 0.0
-    for i in range(len(lat) - 1):
-        phi1 = math.radians(lat[i])
-        phi2 = math.radians(lat[i + 1])
-        dphi = math.radians(lat[i + 1] - lat[i])
-        dlam = math.radians(lon[i + 1] - lon[i])
-        a = (math.sin(dphi / 2) ** 2 +
-             math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2)
-        total += R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return total
+_FALLBACK_FUEL_L100KM = 8.0
+_MIN_DIST_KM_FOR_AVG  = 0.1
+
+
+def _extract_fuel_l(df: pd.DataFrame, distance_km: float) -> float:
+    """Total fuel burned over the drive, in litres.
+
+    Tries three sources in order: a direct 'Fuel used' PID (difference of
+    last and first reading), trapezoidal integration of an instant fuel
+    rate PID, and finally a fixed L/100km estimate if neither PID is
+    present in the CSV.
+    """
+    if 'pid' in df.columns:
+        pid_col = df['pid'].str.strip()
+
+        # 1. priority: 'Fuel used' PID — direct litre measurement
+        fuel_used_df = df[pid_col == 'Fuel used'].copy()
+        if not fuel_used_df.empty:
+            vals = pd.to_numeric(fuel_used_df['value'], errors='coerce').dropna()
+            if len(vals) >= 2:
+                total = float(vals.iloc[-1]) - float(vals.iloc[0])
+                if total > 0:
+                    print(f"[AutoDNA] Fuel: read from 'Fuel used' PID: {total:.4f} L")
+                    return total
+
+        # 2. priority: instant fuel rate — trapezoid integration
+        for pid_name in ('Calculated instant fuel rate', 'engine fuel rate'):
+            rate_df = df[pid_col.str.lower() == pid_name.lower()].copy()
+            if not rate_df.empty:
+                rate_df = rate_df.sort_values('seconds')
+                ts  = rate_df['seconds'].values.astype(np.float64)
+                val = pd.to_numeric(rate_df['value'], errors='coerce').fillna(0).values.astype(np.float64)
+                dt_h  = np.diff(ts) / 3600.0
+                total = float(np.sum(((val[:-1] + val[1:]) / 2.0) * dt_h))
+                if total > 0:
+                    print(f"[AutoDNA] Fuel: trapz integration of {pid_name!r}: {total:.4f} L")
+                    return total
+
+    # 3. fallback estimate
+    print(f"[AutoDNA] Fuel: no PID data — estimating at {_FALLBACK_FUEL_L100KM} L/100km")
+    return distance_km * _FALLBACK_FUEL_L100KM / 100.0
+
+
+def _fuel_rate_per_point(df: pd.DataFrame, ts: np.ndarray, total_fuel_l: float) -> np.ndarray:
+    """
+    Instant fuel rate (L/s) sampled at each GPS timestamp, for per-segment
+    consumption. Prefers the OBD2 instant-rate PID; otherwise spreads the
+    drive's total fuel uniformly over its duration (flat rate).
+    """
+    n = len(ts)
+    if 'pid' in df.columns:
+        pid = df['pid'].str.strip()
+        for name in ('Calculated instant fuel rate', 'engine fuel rate'):
+            r = df[pid.str.lower() == name.lower()].copy()
+            if not r.empty:
+                r = r.sort_values('seconds')
+                rt = r['seconds'].values.astype(np.float64)
+                rv = pd.to_numeric(r['value'], errors='coerce').fillna(0).values.astype(np.float64)
+                if len(rt) >= 2 and np.ptp(rt) > 0:
+                    lph = np.interp(ts, rt, rv)          # L/h at each GPS point
+                    return (lph / 3600.0).astype(np.float32)  # → L/s
+
+    # fallback: uniform rate so segments are at least comparable within a drive
+    span = float(ts[-1] - ts[0]) if n >= 2 else 0.0
+    flat = (total_fuel_l / span) if span > 0 else 0.0
+    return np.full(n, flat, dtype=np.float32)

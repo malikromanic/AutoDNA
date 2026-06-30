@@ -287,7 +287,7 @@ def evaluate(model, val_files):
 
 
 def main():
-    sample_files = sorted(Path('../input_data').glob('*_training.npz'))
+    sample_files = sorted(Path('../input_data_flipped').glob('*_training.npz'))
     
     mode = 2 
     

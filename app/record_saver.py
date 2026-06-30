@@ -1,14 +1,20 @@
 # -*- coding: utf-8 -*-
-"""
+"""Early per-segment fuel-record tracker, not used by the live app.
+
+Superseded by :mod:`app.segment_records`, which buckets segments by
+type/magnitude instead of a single flat key and also tracks
+record/close/worse classification for the map. Kept around for
+reference; nothing in ``app/`` imports this module anymore.
+
 Created on Fri Jun  5 16:41:07 2026
 
 @author: mihal
 """
 
 import json
-from pathlib import Path
+from AutoDNA.app.get_path import get_data_dir
 
-RECORDS_FILE = Path(__file__).resolve().parent.parent / "autodna_records.json"
+RECORDS_FILE = get_data_dir() / "autodna_records.json"
 
 
 def load_records() -> dict:
