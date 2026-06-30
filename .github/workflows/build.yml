@@ -22,12 +22,11 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Build exe
-        run: pyinstaller --noconfirm AutoDNA.spec
-        working-directory: ${{ github.workspace }}/AutoDNA
+        run: pyinstaller --noconfirm autodna.spec
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AutoDNA
+          name: AutoDNA-Windows
           path: dist/AutoDNA/
           retention-days: 90
