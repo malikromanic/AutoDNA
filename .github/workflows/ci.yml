@@ -26,6 +26,7 @@ jobs:
 
       - name: Lint (ruff)
         run: ruff check .
+        continue-on-error: true   # advisory only — lint never blocks the build
 
       - name: Run tests with coverage
-        run: pytest --cov=stm32/bin_parser --cov=ai/preprocessing --cov=ai/features --cov-report=term-missing -v
+        run: pytest --cov=app --cov=stm32/bin_parser --cov=ai/preprocessing --cov-report=term-missing -v

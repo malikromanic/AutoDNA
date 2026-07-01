@@ -19,35 +19,13 @@ from AutoDNA.app.data_loader import DriveDataLoader
 from AutoDNA.app.feature_loader import process_drive_fuel_features, load_store
 from AutoDNA.app.fuel_model import fit_and_explain, save_stats_cache
 from AutoDNA.app.segment_records import evaluate_drive
+from AutoDNA.app.paths import resolve_drive_path
 
 from AutoDNA.app.ui.sidebar import Sidebar
 from AutoDNA.app.ui.dashboard_view import DashboardView
 from AutoDNA.app.ui.elevation_view import ElevationView
 from AutoDNA.app.ui.drives_view import DrivesView
 from AutoDNA.app.ui.stats_view import StatsView
-
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-
-
-def _resolve_drive_path(p) -> Path:
-    """
-    Resolve a stored drive path on THIS machine.
-
-    Drive paths saved in the store may be absolute paths from another teammate's
-    computer. If the path doesn't exist locally, re-root it onto this repo's
-    data/ folder (the drive folders are committed, so they resolve everywhere).
-    """
-    path = Path(p)
-    if path.exists():
-        return path
-    parts = path.parts
-    for i in range(len(parts) - 1):
-        if parts[i] == "data" and parts[i + 1] == "drive_data":
-            candidate = _REPO_ROOT.joinpath(*parts[i:])
-            if candidate.exists():
-                return candidate
-            break
-    return path  # unchanged → caller surfaces a clear "not found" error
 
 
 class AutoDNAApplication(QMainWindow):
@@ -197,7 +175,7 @@ class AutoDNAApplication(QMainWindow):
         via :meth:`_handle_load_error`.
         """
         try:
-            drive_path = _resolve_drive_path(drive_path)   # re-root teammate paths
+            drive_path = resolve_drive_path(drive_path)    # re-root teammate paths
             self.status.showMessage("Loading drive… (looking up DEM elevation)")
             loader = DriveDataLoader(Path(drive_path))
             #self.drive_data = loader.load_drive()
