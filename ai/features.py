@@ -1,14 +1,31 @@
+"""Hand-crafted IMU feature extraction for the turn/hill window classifier.
+
+Collapses a fixed ``(100, 9)`` window of preprocessed IMU samples
+(``[gyro_xyz | accel_xyz | mag_xyz]``) into a fixed-length vector of
+:data:`N_FEATURES` statistics — per-axis mean/std/extremes, threshold-crossing
+fractions, a gyro-Z / accel-Y correlation, and energy terms. The width is fixed
+so it can feed a model with a constant input size.
+"""
+
 import numpy as np
 
+# Column indices into a (100, 9) window.
 GYRO_X, GYRO_Y, GYRO_Z    = 0, 1, 2
 ACCEL_X, ACCEL_Y, ACCEL_Z = 3, 4, 5
 MAG_X,  MAG_Y,  MAG_Z     = 6, 7, 8
 
+#: Length of the vector returned by :func:`extract_features`.
 N_FEATURES = 36
 
 
 def extract_features(window: np.ndarray) -> np.ndarray:
-    """36 hand-crafted features from a (100, 9) IMU window [gyro_xyz|accel_xyz|mag_xyz]."""
+    """Compute the :data:`N_FEATURES`-length feature vector for one IMU window.
+
+    :param window: ``(100, 9)`` float array, columns ``[gyro_xyz|accel_xyz|mag_xyz]``.
+    :returns: ``(N_FEATURES,)`` ``float32`` vector. Zero-variance inputs (e.g. a
+        stationary vehicle) are guarded so the correlation / ratio terms never
+        return ``NaN``.
+    """
     feats: list[float] = []
     gz = window[:, GYRO_Z]
     feats += [gz.max(), gz.min(), gz.mean(), gz.std(),

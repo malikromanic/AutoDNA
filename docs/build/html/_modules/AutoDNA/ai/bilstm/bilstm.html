@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoDNA.ai.bilstm.bilstm &#8212; AutoDNA 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../../../_static/documentation_options.js?v=f2a433a1"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+   
+  <link rel="stylesheet" href="../../../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for AutoDNA.ai.bilstm.bilstm</h1><div class="highlight"><pre>
+<span></span><span class="c1"># -*- coding: utf-8 -*-</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Created on Thu May 14 16:45:16 2026</span>
+<span class="sd"> </span>
+<span class="sd">@author: mihal</span>
+<span class="sd">&quot;&quot;&quot;</span>
+ 
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.optim</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">optim</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.utils.data</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dataset</span><span class="p">,</span> <span class="n">DataLoader</span>
+ 
+<span class="c1">#hiperparametri</span>
+<span class="n">num_layers</span>   <span class="o">=</span> <span class="mi">2</span>
+<span class="n">hidden_size</span>  <span class="o">=</span> <span class="mi">64</span>
+<span class="n">num_outputs</span>  <span class="o">=</span> <span class="mi">7</span>        
+<span class="n">learning_rate</span> <span class="o">=</span> <span class="mf">0.0001</span>
+<span class="n">batch_size</span>   <span class="o">=</span> <span class="mi">1</span>        
+<span class="n">num_epochs</span>   <span class="o">=</span> <span class="mi">200</span>
+
+
+<span class="n">MAX_ANGLE_TURN</span> <span class="o">=</span> <span class="mi">100</span>
+<span class="n">MAX_ANGLE_HILL</span> <span class="o">=</span> <span class="mi">15</span>  
+ 
+ 
+<div class="viewcode-block" id="load_training_sample">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.bilstm.bilstm.load_training_sample">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_training_sample</span><span class="p">(</span><span class="n">filepath</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Load one training sample from a .npz file.</span>
+<span class="sd"> </span>
+<span class="sd">    :param filepath: Path to the .npz file with preprocessed sensor data.</span>
+<span class="sd">    :returns: Tuple (accel, gyro, mag, y) where accel/gyro/mag are RGB</span>
+<span class="sd">              spectrograms of shape (F, T, 3) normalized to [0, 1],</span>
+<span class="sd">              and y is the label matrix of shape (T, 7).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">filepath</span><span class="p">)</span>
+    <span class="n">accel</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s1">&#39;accel_rgb&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span> <span class="o">/</span> <span class="mf">255.0</span>   <span class="c1">#(F, T, 3)</span>
+    <span class="n">gyro</span>  <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s1">&#39;gyro_rgb&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>  <span class="o">/</span> <span class="mf">255.0</span>
+    <span class="n">mag</span>   <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s1">&#39;mag_rgb&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>   <span class="o">/</span> <span class="mf">255.0</span>
+    <span class="n">y</span>     <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s1">&#39;labels&#39;</span><span class="p">]</span>                                 <span class="c1">#(T, 7)</span>
+    
+    <span class="c1">#print(f&quot;accel: {accel.shape}, gyro: {gyro.shape}, mag: {mag.shape}, y: {y.shape}&quot;)</span>
+ 
+    <span class="k">return</span> <span class="n">accel</span><span class="p">,</span> <span class="n">gyro</span><span class="p">,</span> <span class="n">mag</span><span class="p">,</span> <span class="n">y</span></div>
+
+ 
+ 
+<div class="viewcode-block" id="flatten_sensors">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.bilstm.bilstm.flatten_sensors">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">flatten_sensors</span><span class="p">(</span><span class="n">accel</span><span class="p">,</span> <span class="n">gyro</span><span class="p">,</span> <span class="n">mag</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Combine RGB spectrograms from all three sensors into one time series.</span>
+<span class="sd"> </span>
+<span class="sd">    Each sensor has shape (F, T, 3). The frequency and color dimensions</span>
+<span class="sd">    are flattened into one vector and transposed to (T, F*3).</span>
+<span class="sd">    All three sensors are concatenated along the time axis.</span>
+<span class="sd"> </span>
+<span class="sd">    :param accel: Accelerometer RGB spectrogram of shape (F, T, 3).</span>
+<span class="sd">    :param gyro: Gyroscope RGB spectrogram of shape (F, T, 3).</span>
+<span class="sd">    :param mag: Magnetometer RGB spectrogram of shape (F, T, 3).</span>
+<span class="sd">    :returns: Matrix of shape (T, F*9) where each row represents</span>
+<span class="sd">              one timestep with all sensor values.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">F</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">accel</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">accel_flat</span> <span class="o">=</span> <span class="n">accel</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">F</span><span class="o">*</span><span class="mi">3</span><span class="p">,</span> <span class="n">T</span><span class="p">)</span><span class="o">.</span><span class="n">T</span>
+    <span class="n">gyro_flat</span>  <span class="o">=</span> <span class="n">gyro</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">F</span><span class="o">*</span><span class="mi">3</span><span class="p">,</span> <span class="n">T</span><span class="p">)</span><span class="o">.</span><span class="n">T</span>
+    <span class="n">mag_flat</span>   <span class="o">=</span> <span class="n">mag</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">F</span><span class="o">*</span><span class="mi">3</span><span class="p">,</span> <span class="n">T</span><span class="p">)</span><span class="o">.</span><span class="n">T</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">minmax</span><span class="p">(</span><span class="n">arr</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Min-max scale *arr* to [0, 1] (identity if the array is constant).&quot;&quot;&quot;</span>
+        <span class="n">mn</span><span class="p">,</span> <span class="n">mx</span> <span class="o">=</span> <span class="n">arr</span><span class="o">.</span><span class="n">min</span><span class="p">(),</span> <span class="n">arr</span><span class="o">.</span><span class="n">max</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">mx</span> <span class="o">&gt;</span> <span class="n">mn</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">(</span><span class="n">arr</span> <span class="o">-</span> <span class="n">mn</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">mx</span> <span class="o">-</span> <span class="n">mn</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">arr</span>
+
+    <span class="c1"># scale each sensor independently to preserve relative differences</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">minmax</span><span class="p">(</span><span class="n">accel_flat</span><span class="p">),</span> <span class="n">minmax</span><span class="p">(</span><span class="n">gyro_flat</span><span class="p">),</span> <span class="n">minmax</span><span class="p">(</span><span class="n">mag_flat</span><span class="p">)],</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span></div>
+
+ 
+ 
+<div class="viewcode-block" id="DriveDataset">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.bilstm.bilstm.DriveDataset">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">DriveDataset</span><span class="p">(</span><span class="n">Dataset</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    PyTorch Dataset for loading training samples from .npz files.</span>
+<span class="sd"> </span>
+<span class="sd">    Each sample is one drive sequence with all sensor data</span>
+<span class="sd">    and labels for every timestep.</span>
+<span class="sd"> </span>
+<span class="sd">    :param sample_files: List of paths to .npz training files.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+ 
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">sample_files</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Initialize the dataset with a list of files.</span>
+<span class="sd"> </span>
+<span class="sd">        :param sample_files: List or generator of paths to .npz files.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">files</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">sample_files</span><span class="p">)</span>
+ 
+    <span class="k">def</span><span class="w"> </span><span class="fm">__len__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Return the number of samples in the dataset.</span>
+<span class="sd"> </span>
+<span class="sd">        :returns: Number of .npz files.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">files</span><span class="p">)</span>
+ 
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">idx</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Load and prepare one sample by index.</span>
+<span class="sd"> </span>
+<span class="sd">        :param idx: Index of the sample in the file list.</span>
+<span class="sd">        :returns: Tuple (x, y) where x is a tensor of shape (T, input_size)</span>
+<span class="sd">                  and y is a label tensor of shape (T, 7).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">accel</span><span class="p">,</span> <span class="n">gyro</span><span class="p">,</span> <span class="n">mag</span><span class="p">,</span> <span class="n">y</span> <span class="o">=</span> <span class="n">load_training_sample</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">files</span><span class="p">[</span><span class="n">idx</span><span class="p">])</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">flatten_sensors</span><span class="p">(</span><span class="n">accel</span><span class="p">,</span> <span class="n">gyro</span><span class="p">,</span> <span class="n">mag</span><span class="p">)</span>            
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">x</span><span class="p">),</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">y</span><span class="p">)</span></div>
+
+    
+ 
+<div class="viewcode-block" id="BiLSTM">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.bilstm.bilstm.BiLSTM">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">BiLSTM</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Bidirectional LSTM network for per-timestep classification of driving maneuvers.</span>
+<span class="sd"> </span>
+<span class="sd">    The network accepts a time series of sensor data and predicts 7 values</span>
+<span class="sd">    for each timestep: turn presence and direction, hill presence and direction,</span>
+<span class="sd">    their respective angles, and a straight driving indicator.</span>
+<span class="sd"> </span>
+<span class="sd">    Architecture: BiLSTM -&gt; Dropout -&gt; Linear -&gt; Sigmoid</span>
+<span class="sd"> </span>
+<span class="sd">    :param input_size: Size of the input vector per timestep.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+ 
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">input_size</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Initialize the BiLSTM model with the given input size.</span>
+<span class="sd"> </span>
+<span class="sd">        :param input_size: Number of input features per timestep</span>
+<span class="sd">                           (F * 3 channels * 3 sensors).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">BiLSTM</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lstm</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">LSTM</span><span class="p">(</span>
+            <span class="n">input_size</span><span class="p">,</span> <span class="n">hidden_size</span><span class="p">,</span> <span class="n">num_layers</span><span class="p">,</span>
+            <span class="n">bidirectional</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">batch_first</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">dropout</span><span class="o">=</span><span class="mf">0.3</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="mf">0.3</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">fc</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">hidden_size</span> <span class="o">*</span> <span class="mi">2</span><span class="p">,</span> <span class="n">num_outputs</span><span class="p">)</span>
+ 
+<div class="viewcode-block" id="BiLSTM.forward">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.bilstm.bilstm.BiLSTM.forward">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Perform one forward pass through the network.</span>
+<span class="sd"> </span>
+<span class="sd">        :param x: Input tensor of shape (batch, T, input_size).</span>
+<span class="sd">        :returns: Output tensor of shape (batch, T, 7) with values in [0, 1].</span>
+<span class="sd">                  Outputs are:</span>
+<span class="sd">                  - col 0: turn_present</span>
+<span class="sd">                  - col 1: turn_dir (0=left, 1=right)</span>
+<span class="sd">                  - col 2: turn_angle normalized to [0, 1]</span>
+<span class="sd">                  - col 3: hill_present</span>
+<span class="sd">                  - col 4: hill_dir (0=down, 1=up)</span>
+<span class="sd">                  - col 5: hill_angle normalized to [0, 1]</span>
+<span class="sd">                  - col 6: straight</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">out</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">lstm</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>          
+        <span class="n">out</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dropout</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">fc</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>             
+        <span class="c1">#return torch.sigmoid(out)</span>
+        <span class="k">return</span> <span class="n">out</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="get_labeled_mask">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.bilstm.bilstm.get_labeled_mask">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_labeled_mask</span><span class="p">(</span><span class="n">target</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Returns True for timesteps that have at least one label.&quot;&quot;&quot;</span>
+    <span class="c1"># sum across all 7 outputs — if all zero, timestep is unlabeled</span>
+    <span class="k">return</span> <span class="n">target</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span>  <span class="c1"># shape (batch, T)</span></div>
+
+
+
+<div class="viewcode-block" id="stratified_split">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.bilstm.bilstm.stratified_split">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">stratified_split</span><span class="p">(</span><span class="n">sample_files</span><span class="p">,</span> <span class="n">val_ratio</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">42</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Split files ensuring val set has similar class distribution to train.&quot;&quot;&quot;</span>
+    <span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+    
+    <span class="c1"># load label distribution per file</span>
+    <span class="n">file_distributions</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">sample_files</span><span class="p">:</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s1">&#39;labels&#39;</span><span class="p">]</span>
+        <span class="n">labeled</span> <span class="o">=</span> <span class="n">y</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span>
+        <span class="n">y_labeled</span> <span class="o">=</span> <span class="n">y</span><span class="p">[</span><span class="n">labeled</span><span class="p">]</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">y_labeled</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">dist</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># use straight ratio as proxy — high = mostly straight, low = eventful</span>
+            <span class="n">dist</span> <span class="o">=</span> <span class="n">y_labeled</span><span class="p">[:,</span> <span class="mi">6</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+        <span class="n">file_distributions</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">f</span><span class="p">,</span> <span class="n">dist</span><span class="p">))</span>
+    
+    <span class="c1"># sort by straight ratio and interleave into val/train</span>
+    <span class="n">file_distributions</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+    
+    <span class="n">val_files</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">train_files</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">val_count</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">sample_files</span><span class="p">)</span> <span class="o">*</span> <span class="n">val_ratio</span><span class="p">))</span>
+    
+    <span class="c1"># pick every Nth file for val to ensure spread across distribution</span>
+    <span class="n">step</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">sample_files</span><span class="p">)</span> <span class="o">//</span> <span class="n">val_count</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">dist</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">file_distributions</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">i</span> <span class="o">%</span> <span class="n">step</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">val_files</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">val_count</span><span class="p">:</span>
+            <span class="n">val_files</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">train_files</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+    
+    <span class="k">return</span> <span class="n">train_files</span><span class="p">,</span> <span class="n">val_files</span></div>
+
+
+
+<div class="viewcode-block" id="compute_pos_weights">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.bilstm.bilstm.compute_pos_weights">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_pos_weights</span><span class="p">(</span><span class="n">dataset</span><span class="p">,</span> <span class="n">max_weight</span><span class="o">=</span><span class="mf">3.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Calculate pos_weight for each binary output from training data.</span>
+<span class="sd">    Capped at max_weight to prevent extreme imbalance dominating loss.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">all_labels</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">dataset</span><span class="p">)):</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">y</span> <span class="o">=</span> <span class="n">dataset</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+        <span class="n">labeled</span> <span class="o">=</span> <span class="n">get_labeled_mask</span><span class="p">(</span><span class="n">y</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">all_labels</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">y</span><span class="p">[</span><span class="n">labeled</span><span class="p">])</span>
+    
+    <span class="n">all_labels</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">all_labels</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    
+    <span class="n">weights</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">col</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="p">[(</span><span class="mi">0</span><span class="p">,</span><span class="s1">&#39;turn&#39;</span><span class="p">),</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span><span class="s1">&#39;hill&#39;</span><span class="p">),</span> <span class="p">(</span><span class="mi">6</span><span class="p">,</span><span class="s1">&#39;straight&#39;</span><span class="p">),</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="s1">&#39;turn_dir&#39;</span><span class="p">),</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span><span class="s1">&#39;hill_dir&#39;</span><span class="p">)]:</span>
+        <span class="n">pos</span> <span class="o">=</span> <span class="n">all_labels</span><span class="p">[:,</span> <span class="n">col</span><span class="p">]</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+        <span class="n">neg</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">all_labels</span><span class="p">[:,</span> <span class="n">col</span><span class="p">])</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+        <span class="n">pw</span> <span class="o">=</span> <span class="n">neg</span> <span class="o">/</span> <span class="p">(</span><span class="n">pos</span> <span class="o">+</span> <span class="mf">1e-8</span><span class="p">)</span>
+        <span class="n">pw</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="n">pw</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span> <span class="mf">0.8</span><span class="p">),</span> <span class="n">max_weight</span><span class="p">)</span>  <span class="c1"># keep between 0.8 and 3.0</span>
+        <span class="n">weights</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="n">pw</span><span class="p">])</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  pos_weight </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">pw</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">  (pos=</span><span class="si">{</span><span class="n">pos</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">, neg=</span><span class="si">{</span><span class="n">neg</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+    
+    <span class="k">return</span> <span class="n">weights</span></div>
+
+
+
+<div class="viewcode-block" id="masked_loss">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.bilstm.bilstm.masked_loss">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">masked_loss</span><span class="p">(</span><span class="n">pred</span><span class="p">,</span> <span class="n">target</span><span class="p">,</span> <span class="n">pw</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Multi-task loss computed over labelled timesteps only.</span>
+
+<span class="sd">    Sums pos-weighted BCE for turn/hill/straight presence and direction plus an</span>
+<span class="sd">    L1 term on the two normalised angle outputs. Timesteps whose target row is</span>
+<span class="sd">    all-zero (unlabelled) are masked out. *pw* maps head names to pos-weights.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">bce_turn</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">t</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Pos-weighted BCE for the turn-presence head.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">nn</span><span class="o">.</span><span class="n">BCEWithLogitsLoss</span><span class="p">(</span><span class="n">pos_weight</span><span class="o">=</span><span class="n">pw</span><span class="p">[</span><span class="s1">&#39;turn&#39;</span><span class="p">])(</span><span class="n">p</span><span class="p">,</span> <span class="n">t</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">bce_hill</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">t</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Pos-weighted BCE for the hill-presence head.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">nn</span><span class="o">.</span><span class="n">BCEWithLogitsLoss</span><span class="p">(</span><span class="n">pos_weight</span><span class="o">=</span><span class="n">pw</span><span class="p">[</span><span class="s1">&#39;hill&#39;</span><span class="p">])(</span><span class="n">p</span><span class="p">,</span> <span class="n">t</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">bce_straight</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">t</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Pos-weighted BCE for the straight head.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">nn</span><span class="o">.</span><span class="n">BCEWithLogitsLoss</span><span class="p">(</span><span class="n">pos_weight</span><span class="o">=</span><span class="n">pw</span><span class="p">[</span><span class="s1">&#39;straight&#39;</span><span class="p">])(</span><span class="n">p</span><span class="p">,</span> <span class="n">t</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">bce_dir</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">t</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Pos-weighted BCE for a direction head (turn/hill left-right / up-down).&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">nn</span><span class="o">.</span><span class="n">BCEWithLogitsLoss</span><span class="p">(</span><span class="n">pos_weight</span><span class="o">=</span><span class="n">pw</span><span class="p">[</span><span class="s1">&#39;turn_dir&#39;</span><span class="p">])(</span><span class="n">p</span><span class="p">,</span> <span class="n">t</span><span class="p">)</span>
+
+    <span class="c1"># L1 instead of MSE for angle regression — more robust to outliers</span>
+    <span class="n">l1</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">L1Loss</span><span class="p">()</span>
+
+    <span class="n">pred_prob</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sigmoid</span><span class="p">(</span><span class="n">pred</span><span class="p">)</span>
+
+    <span class="n">labeled</span> <span class="o">=</span> <span class="n">get_labeled_mask</span><span class="p">(</span><span class="n">target</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">labeled</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="n">pred_l</span>      <span class="o">=</span> <span class="n">pred</span><span class="p">[</span><span class="n">labeled</span><span class="p">]</span>
+    <span class="n">target_l</span>    <span class="o">=</span> <span class="n">target</span><span class="p">[</span><span class="n">labeled</span><span class="p">]</span>
+    <span class="n">pred_prob_l</span> <span class="o">=</span> <span class="n">pred_prob</span><span class="p">[</span><span class="n">labeled</span><span class="p">]</span>
+
+    <span class="n">loss</span> <span class="o">=</span> <span class="n">bce_turn</span><span class="p">(</span><span class="n">pred_l</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">],</span>      <span class="n">target_l</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">])</span>
+    <span class="n">loss</span> <span class="o">+=</span> <span class="n">bce_hill</span><span class="p">(</span><span class="n">pred_l</span><span class="p">[:,</span> <span class="mi">3</span><span class="p">],</span>     <span class="n">target_l</span><span class="p">[:,</span> <span class="mi">3</span><span class="p">])</span>
+    <span class="n">loss</span> <span class="o">+=</span> <span class="n">bce_straight</span><span class="p">(</span><span class="n">pred_l</span><span class="p">[:,</span> <span class="mi">6</span><span class="p">],</span> <span class="n">target_l</span><span class="p">[:,</span> <span class="mi">6</span><span class="p">])</span>
+
+    <span class="n">turn_mask</span> <span class="o">=</span> <span class="n">target_l</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">0.5</span>
+    <span class="k">if</span> <span class="n">turn_mask</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+        <span class="n">loss</span> <span class="o">+=</span> <span class="n">bce_dir</span><span class="p">(</span><span class="n">pred_l</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">][</span><span class="n">turn_mask</span><span class="p">],</span> <span class="n">target_l</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">][</span><span class="n">turn_mask</span><span class="p">])</span>
+
+    <span class="n">hill_mask</span> <span class="o">=</span> <span class="n">target_l</span><span class="p">[:,</span> <span class="mi">3</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">0.5</span>
+    <span class="k">if</span> <span class="n">hill_mask</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+        <span class="n">loss</span> <span class="o">+=</span> <span class="n">bce_dir</span><span class="p">(</span><span class="n">pred_l</span><span class="p">[:,</span> <span class="mi">4</span><span class="p">][</span><span class="n">hill_mask</span><span class="p">],</span> <span class="n">target_l</span><span class="p">[:,</span> <span class="mi">4</span><span class="p">][</span><span class="n">hill_mask</span><span class="p">])</span>
+
+    <span class="c1"># L1 loss with higher weight so angle regression competes with presence losses</span>
+    <span class="k">if</span> <span class="n">turn_mask</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+        <span class="n">loss</span> <span class="o">+=</span> <span class="mf">3.0</span> <span class="o">*</span> <span class="n">l1</span><span class="p">(</span><span class="n">pred_prob_l</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">][</span><span class="n">turn_mask</span><span class="p">],</span> <span class="n">target_l</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">][</span><span class="n">turn_mask</span><span class="p">])</span>
+    <span class="k">if</span> <span class="n">hill_mask</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+        <span class="n">loss</span> <span class="o">+=</span> <span class="mf">3.0</span> <span class="o">*</span> <span class="n">l1</span><span class="p">(</span><span class="n">pred_prob_l</span><span class="p">[:,</span> <span class="mi">5</span><span class="p">][</span><span class="n">hill_mask</span><span class="p">],</span> <span class="n">target_l</span><span class="p">[:,</span> <span class="mi">5</span><span class="p">][</span><span class="n">hill_mask</span><span class="p">])</span>
+
+    <span class="k">return</span> <span class="n">loss</span></div>
+
+
+
+<div class="viewcode-block" id="train_model">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.bilstm.bilstm.train_model">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">train_model</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">train_set</span><span class="p">,</span> <span class="n">val_set</span><span class="p">,</span> <span class="n">print_info</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Train the BiLSTM with early stopping on validation F1, saving the best weights.</span>
+
+<span class="sd">    Returns ``(train_losses, val_losses, accuracies)`` and writes ``bilstm_best.pth``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">print_info</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Training...</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        
+    <span class="n">pw</span> <span class="o">=</span> <span class="n">compute_pos_weights</span><span class="p">(</span><span class="n">train_set</span><span class="p">)</span>
+    
+        
+    <span class="n">start_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    
+    <span class="n">optimizer</span> <span class="o">=</span> <span class="n">optim</span><span class="o">.</span><span class="n">Adam</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">lr</span><span class="o">=</span><span class="n">learning_rate</span><span class="p">,</span> <span class="n">weight_decay</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span>
+    <span class="n">scheduler</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">lr_scheduler</span><span class="o">.</span><span class="n">ReduceLROnPlateau</span><span class="p">(</span>
+        <span class="n">optimizer</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s1">&#39;max&#39;</span><span class="p">,</span> <span class="n">factor</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">patience</span><span class="o">=</span><span class="mi">5</span>  <span class="c1"># mode=&#39;max&#39; because we track accuracy</span>
+    <span class="p">)</span>
+    <span class="n">train_loader</span> <span class="o">=</span> <span class="n">DataLoader</span><span class="p">(</span><span class="n">train_set</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">shuffle</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  
+    <span class="n">val_loader</span> <span class="o">=</span> <span class="n">DataLoader</span><span class="p">(</span><span class="n">val_set</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">shuffle</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span> 
+
+    <span class="n">train_losses</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">val_losses</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">accs</span> <span class="o">=</span> <span class="p">[]</span>
+    
+    <span class="n">best_val_acc</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="n">patience_counter</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">patience</span> <span class="o">=</span> <span class="mi">25</span>
+
+    <span class="k">for</span> <span class="n">epoch</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_epochs</span><span class="p">):</span>   
+        <span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+        <span class="n">train_loss_sum</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="k">for</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="ow">in</span> <span class="n">train_loader</span><span class="p">:</span>
+            <span class="n">pred</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+            <span class="n">loss</span> <span class="o">=</span> <span class="n">masked_loss</span><span class="p">(</span><span class="n">pred</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">pw</span><span class="p">)</span>
+            <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>       
+            <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">clip_grad_norm_</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">max_norm</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+            <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+            <span class="n">train_loss_sum</span> <span class="o">+=</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+        <span class="n">train_losses</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">train_loss_sum</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">train_loader</span><span class="p">))</span>
+        
+        <span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+        <span class="n">val_loss_sum</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="n">all_preds</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">all_targets</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="k">for</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="ow">in</span> <span class="n">val_loader</span><span class="p">:</span>
+                <span class="n">raw</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+                <span class="n">pred</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sigmoid</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
+                <span class="n">all_preds</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pred</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+                <span class="n">all_targets</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">y</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+                <span class="n">loss</span> <span class="o">=</span> <span class="n">masked_loss</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">pw</span><span class="p">)</span>
+                <span class="n">val_loss_sum</span> <span class="o">+=</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+        
+        <span class="n">val_losses</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">val_loss_sum</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">val_loader</span><span class="p">))</span>
+        <span class="n">current_acc</span> <span class="o">=</span> <span class="n">measure_epoch_acc</span><span class="p">(</span><span class="n">all_preds</span><span class="p">,</span> <span class="n">all_targets</span><span class="p">)</span>
+        <span class="n">accs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">current_acc</span><span class="p">)</span>
+
+        <span class="c1"># lr scheduler steps on accuracy</span>
+        <span class="n">scheduler</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">current_acc</span><span class="p">)</span>
+
+        <span class="c1"># early stopping on accuracy</span>
+        <span class="k">if</span> <span class="n">current_acc</span> <span class="o">&gt;</span> <span class="n">best_val_acc</span><span class="p">:</span>
+            <span class="n">best_val_acc</span> <span class="o">=</span> <span class="n">current_acc</span>
+            <span class="n">patience_counter</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span> <span class="s1">&#39;bilstm_best.pth&#39;</span><span class="p">)</span>  <span class="c1"># save best</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">patience_counter</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="k">if</span> <span class="n">patience_counter</span> <span class="o">&gt;=</span> <span class="n">patience</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">print_info</span><span class="p">:</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Early stopping at epoch </span><span class="si">{</span><span class="n">epoch</span><span class="o">+</span><span class="mi">1</span><span class="si">}</span><span class="s2">, best acc: </span><span class="si">{</span><span class="n">best_val_acc</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+                <span class="k">break</span>
+        
+    <span class="n">end_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    
+    <span class="k">if</span> <span class="n">print_info</span><span class="p">:</span>
+        <span class="n">fig</span><span class="p">,</span> <span class="p">(</span><span class="n">ax1</span><span class="p">,</span> <span class="n">ax2</span><span class="p">)</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="mi">8</span><span class="p">))</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">train_losses</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;Train loss&#39;</span><span class="p">)</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">val_losses</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;Val loss&#39;</span><span class="p">)</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s1">&#39;Epoha&#39;</span><span class="p">)</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Izguba&#39;</span><span class="p">)</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">legend</span><span class="p">()</span>
+
+        <span class="n">ax2</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">accs</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;Val accuracy&#39;</span><span class="p">)</span>
+        <span class="n">ax2</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s1">&#39;Epoha&#39;</span><span class="p">)</span>
+        <span class="n">ax2</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Točnost (%)&#39;</span><span class="p">)</span>
+        <span class="n">ax2</span><span class="o">.</span><span class="n">legend</span><span class="p">()</span>
+
+        <span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+        <span class="n">plt</span><span class="o">.</span><span class="n">savefig</span><span class="p">(</span><span class="s1">&#39;training.png&#39;</span><span class="p">)</span>
+        <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+        <span class="n">plt</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Best val accuracy: </span><span class="si">{</span><span class="n">best_val_acc</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Last train loss: </span><span class="si">{</span><span class="n">train_losses</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Last validation loss: </span><span class="si">{</span><span class="n">val_losses</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">elapsed_time</span> <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="n">end_time</span> <span class="o">-</span> <span class="n">start_time</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Training time: </span><span class="si">{</span><span class="n">elapsed_time</span><span class="si">}</span><span class="s2">s</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span> 
+    
+    <span class="k">return</span> <span class="n">train_losses</span><span class="p">,</span> <span class="n">val_losses</span><span class="p">,</span> <span class="n">accs</span></div>
+
+
+
+<div class="viewcode-block" id="measure_epoch_acc">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.bilstm.bilstm.measure_epoch_acc">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">measure_epoch_acc</span><span class="p">(</span><span class="n">all_preds</span><span class="p">,</span> <span class="n">all_targets</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the mean F1 (%) over the turn/hill/straight presence columns for one epoch.&quot;&quot;&quot;</span>
+    <span class="n">all_preds</span>   <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">all_preds</span><span class="p">,</span>   <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">all_targets</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">all_targets</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="n">labeled</span> <span class="o">=</span> <span class="n">get_labeled_mask</span><span class="p">(</span><span class="n">all_targets</span><span class="p">)</span>
+    <span class="n">all_preds</span>   <span class="o">=</span> <span class="n">all_preds</span><span class="p">[</span><span class="n">labeled</span><span class="p">]</span>
+    <span class="n">all_targets</span> <span class="o">=</span> <span class="n">all_targets</span><span class="p">[</span><span class="n">labeled</span><span class="p">]</span>
+
+    <span class="n">pred_binary</span> <span class="o">=</span> <span class="p">(</span><span class="n">all_preds</span> <span class="o">&gt;</span> <span class="mf">0.5</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;pct_turn     = pred_binary[:, 0].mean().item() * 100</span>
+<span class="sd">    pct_hill     = pred_binary[:, 3].mean().item() * 100</span>
+<span class="sd">    pct_straight = pred_binary[:, 6].mean().item() * 100</span>
+<span class="sd">    #print(f&quot;  pred: turn={pct_turn:.1f}%  hill={pct_hill:.1f}%  straight={pct_straight:.1f}%&quot;)</span>
+
+<span class="sd">    true_turn     = all_targets[:, 0].mean().item() * 100</span>
+<span class="sd">    true_hill     = all_targets[:, 3].mean().item() * 100</span>
+<span class="sd">    true_straight = all_targets[:, 6].mean().item() * 100</span>
+<span class="sd">    #print(f&quot;  true: turn={true_turn:.1f}%  hill={true_hill:.1f}%  straight={true_straight:.1f}%&quot;)&quot;&quot;&quot;</span>
+
+    <span class="c1"># F1 instead of accuracy — penalizes degenerate all-zero or all-one predictions</span>
+    <span class="n">f1s</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">col</span> <span class="ow">in</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">6</span><span class="p">]:</span>
+        <span class="n">tp</span> <span class="o">=</span> <span class="p">((</span><span class="n">pred_binary</span><span class="p">[:,</span> <span class="n">col</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">all_targets</span><span class="p">[:,</span> <span class="n">col</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+        <span class="n">fp</span> <span class="o">=</span> <span class="p">((</span><span class="n">pred_binary</span><span class="p">[:,</span> <span class="n">col</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">all_targets</span><span class="p">[:,</span> <span class="n">col</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">))</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+        <span class="n">fn</span> <span class="o">=</span> <span class="p">((</span><span class="n">pred_binary</span><span class="p">[:,</span> <span class="n">col</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">all_targets</span><span class="p">[:,</span> <span class="n">col</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+        <span class="n">precision</span> <span class="o">=</span> <span class="n">tp</span> <span class="o">/</span> <span class="p">(</span><span class="n">tp</span> <span class="o">+</span> <span class="n">fp</span> <span class="o">+</span> <span class="mf">1e-8</span><span class="p">)</span>
+        <span class="n">recall</span>    <span class="o">=</span> <span class="n">tp</span> <span class="o">/</span> <span class="p">(</span><span class="n">tp</span> <span class="o">+</span> <span class="n">fn</span> <span class="o">+</span> <span class="mf">1e-8</span><span class="p">)</span>
+        <span class="n">f1</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">precision</span> <span class="o">*</span> <span class="n">recall</span> <span class="o">/</span> <span class="p">(</span><span class="n">precision</span> <span class="o">+</span> <span class="n">recall</span> <span class="o">+</span> <span class="mf">1e-8</span><span class="p">)</span>
+        <span class="n">f1s</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">f1</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">f1s</span><span class="p">)</span> <span class="o">*</span> <span class="mi">100</span></div>
+
+ 
+ 
+<div class="viewcode-block" id="into_deterministic">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.bilstm.bilstm.into_deterministic">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">into_deterministic</span><span class="p">(</span><span class="n">pred</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Convert raw model predictions into deterministic decisions.</span>
+
+<span class="sd">    Applies sigmoid to convert raw logits to probabilities,</span>
+<span class="sd">    then thresholds binary outputs to 0 or 1.</span>
+<span class="sd">    Angle outputs are converted from normalized values to degrees.</span>
+
+<span class="sd">    :param pred: Raw logit tensor of shape (batch, T, 7).</span>
+<span class="sd">    :returns: Tensor of shape (batch, T, 7) with binary decisions</span>
+<span class="sd">              and angles in degrees.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">pred_prob</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sigmoid</span><span class="p">(</span><span class="n">pred</span><span class="p">)</span>
+
+    <span class="n">pred_det</span> <span class="o">=</span> <span class="p">(</span><span class="n">pred_prob</span> <span class="o">&gt;</span> <span class="mf">0.5</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+    <span class="n">pred_det</span><span class="p">[:,</span> <span class="p">:,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="n">pred_prob</span><span class="p">[:,</span> <span class="p">:,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">*</span> <span class="n">MAX_ANGLE_TURN</span>
+    <span class="n">pred_det</span><span class="p">[:,</span> <span class="p">:,</span> <span class="mi">5</span><span class="p">]</span> <span class="o">=</span> <span class="n">pred_prob</span><span class="p">[:,</span> <span class="p">:,</span> <span class="mi">5</span><span class="p">]</span> <span class="o">*</span> <span class="n">MAX_ANGLE_HILL</span>
+
+    <span class="k">return</span> <span class="n">pred_det</span></div>
+
+        
+        
+<div class="viewcode-block" id="evaluate_model">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.bilstm.bilstm.evaluate_model">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">evaluate_model</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">validation_files</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run detailed evaluation of the model on validation files.</span>
+<span class="sd"> </span>
+<span class="sd">    Measures and prints:</span>
+<span class="sd">    - Presence accuracy for turn, hill and straight.</span>
+<span class="sd">    - Direction accuracy for turn and hill (only where events are present).</span>
+<span class="sd">    - Mean absolute angle error for turn and hill in degrees.</span>
+<span class="sd"> </span>
+<span class="sd">    :param model: Trained BiLSTM model in eval mode.</span>
+<span class="sd">    :param validation_files: List of paths to validation .npz files.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Evaluating best saved model (bilstm_best.pth)&quot;</span><span class="p">)</span>
+    <span class="n">val_dataset</span> <span class="o">=</span> <span class="n">DriveDataset</span><span class="p">(</span><span class="n">validation_files</span><span class="p">)</span>
+    <span class="n">val_loader</span> <span class="o">=</span> <span class="n">DataLoader</span><span class="p">(</span><span class="n">val_dataset</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">shuffle</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    
+    <span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span> 
+    <span class="n">all_preds</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">all_targets</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>  
+        <span class="k">for</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="ow">in</span> <span class="n">val_loader</span><span class="p">:</span>
+            <span class="n">raw</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+            <span class="n">pred</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sigmoid</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>  <span class="c1">#v 0-1 za predictione</span>
+            <span class="n">all_preds</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pred</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>    
+            <span class="n">all_targets</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">y</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>     
+    
+    <span class="n">all_preds</span>   <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">all_preds</span><span class="p">,</span>   <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span> 
+    <span class="n">all_targets</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">all_targets</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>  
+    <span class="n">labeled</span> <span class="o">=</span> <span class="n">get_labeled_mask</span><span class="p">(</span><span class="n">all_targets</span><span class="p">)</span>
+    <span class="n">all_preds</span>   <span class="o">=</span> <span class="n">all_preds</span><span class="p">[</span><span class="n">labeled</span><span class="p">]</span>
+    <span class="n">all_targets</span> <span class="o">=</span> <span class="n">all_targets</span><span class="p">[</span><span class="n">labeled</span><span class="p">]</span>
+    
+    <span class="n">pred_binary</span> <span class="o">=</span> <span class="p">(</span><span class="n">all_preds</span> <span class="o">&gt;</span> <span class="mf">0.5</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Best model pred distribution:&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  turn=</span><span class="si">{</span><span class="n">pred_binary</span><span class="p">[:,</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%  hill=</span><span class="si">{</span><span class="n">pred_binary</span><span class="p">[:,</span><span class="mi">3</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%  straight=</span><span class="si">{</span><span class="n">pred_binary</span><span class="p">[:,</span><span class="mi">6</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;After mask — turn: </span><span class="si">{</span><span class="n">all_targets</span><span class="p">[:,</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%  hill: </span><span class="si">{</span><span class="n">all_targets</span><span class="p">[:,</span><span class="mi">3</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%  straight: </span><span class="si">{</span><span class="n">all_targets</span><span class="p">[:,</span><span class="mi">6</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Total labeled timesteps: </span><span class="si">{</span><span class="n">labeled</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">pred_binary</span> <span class="o">=</span> <span class="p">(</span><span class="n">all_preds</span> <span class="o">&gt;</span> <span class="mf">0.5</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+    <span class="n">pred_binary</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="n">all_preds</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">]</span>  <span class="c1"># restore turn angle</span>
+    <span class="n">pred_binary</span><span class="p">[:,</span> <span class="mi">5</span><span class="p">]</span> <span class="o">=</span> <span class="n">all_preds</span><span class="p">[:,</span> <span class="mi">5</span><span class="p">]</span>  <span class="c1"># restore hill angle</span>
+    
+    <span class="k">for</span> <span class="n">col</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="p">[(</span><span class="mi">0</span><span class="p">,</span> <span class="s1">&#39;turn_present&#39;</span><span class="p">),</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="s1">&#39;hill_present&#39;</span><span class="p">),</span> <span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="s1">&#39;straight&#39;</span><span class="p">)]:</span>
+        <span class="n">tp</span> <span class="o">=</span> <span class="p">((</span><span class="n">pred_binary</span><span class="p">[:,</span> <span class="n">col</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">all_targets</span><span class="p">[:,</span> <span class="n">col</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+        <span class="n">fp</span> <span class="o">=</span> <span class="p">((</span><span class="n">pred_binary</span><span class="p">[:,</span> <span class="n">col</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">all_targets</span><span class="p">[:,</span> <span class="n">col</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">))</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+        <span class="n">fn</span> <span class="o">=</span> <span class="p">((</span><span class="n">pred_binary</span><span class="p">[:,</span> <span class="n">col</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">all_targets</span><span class="p">[:,</span> <span class="n">col</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+        <span class="n">correct</span> <span class="o">=</span> <span class="p">(</span><span class="n">pred_binary</span><span class="p">[:,</span> <span class="n">col</span><span class="p">]</span> <span class="o">==</span> <span class="n">all_targets</span><span class="p">[:,</span> <span class="n">col</span><span class="p">])</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+        
+        <span class="n">precision</span> <span class="o">=</span> <span class="n">tp</span> <span class="o">/</span> <span class="p">(</span><span class="n">tp</span> <span class="o">+</span> <span class="n">fp</span> <span class="o">+</span> <span class="mf">1e-8</span><span class="p">)</span>
+        <span class="n">recall</span>    <span class="o">=</span> <span class="n">tp</span> <span class="o">/</span> <span class="p">(</span><span class="n">tp</span> <span class="o">+</span> <span class="n">fn</span> <span class="o">+</span> <span class="mf">1e-8</span><span class="p">)</span>
+        <span class="n">f1</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">precision</span> <span class="o">*</span> <span class="n">recall</span> <span class="o">/</span> <span class="p">(</span><span class="n">precision</span> <span class="o">+</span> <span class="n">recall</span> <span class="o">+</span> <span class="mf">1e-8</span><span class="p">)</span>
+        <span class="n">accuracy</span>  <span class="o">=</span> <span class="n">correct</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">*</span> <span class="mi">100</span>
+        
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: acc=</span><span class="si">{</span><span class="n">accuracy</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%  F1=</span><span class="si">{</span><span class="n">f1</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">  P=</span><span class="si">{</span><span class="n">precision</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">  R=</span><span class="si">{</span><span class="n">recall</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    
+    <span class="c1">#print(&quot;num of left turns:  &quot;, len(np.where(pred_binary[:, 1] == 0)[0]))</span>
+    <span class="c1">#print(&quot;num of right turns: &quot;, len(np.where(pred_binary[:, 1] == 1)[0]))</span>
+    
+    <span class="k">for</span> <span class="n">col</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="p">[(</span><span class="mi">0</span><span class="p">,</span> <span class="s1">&#39;turn_present&#39;</span><span class="p">),</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="s1">&#39;hill_present&#39;</span><span class="p">),</span> <span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="s1">&#39;straight&#39;</span><span class="p">)]:</span>
+        <span class="n">correct</span> <span class="o">=</span> <span class="p">(</span><span class="n">pred_binary</span><span class="p">[:,</span> <span class="n">col</span><span class="p">]</span> <span class="o">==</span> <span class="n">all_targets</span><span class="p">[:,</span> <span class="n">col</span><span class="p">])</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+        <span class="n">accuracy</span> <span class="o">=</span> <span class="n">correct</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">*</span> <span class="mi">100</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> accuracy: </span><span class="si">{</span><span class="n">accuracy</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+ 
+    <span class="n">turn_mask</span> <span class="o">=</span> <span class="n">all_targets</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">0.5</span>
+    <span class="k">if</span> <span class="n">turn_mask</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+        <span class="n">correct</span> <span class="o">=</span> <span class="p">(</span><span class="n">pred_binary</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">][</span><span class="n">turn_mask</span><span class="p">]</span> <span class="o">==</span> <span class="n">all_targets</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">][</span><span class="n">turn_mask</span><span class="p">])</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;turn_direction accuracy: </span><span class="si">{</span><span class="n">correct</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+ 
+    <span class="n">hill_mask</span> <span class="o">=</span> <span class="n">all_targets</span><span class="p">[:,</span> <span class="mi">3</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">0.5</span>
+    <span class="k">if</span> <span class="n">hill_mask</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+        <span class="n">correct</span> <span class="o">=</span> <span class="p">(</span><span class="n">pred_binary</span><span class="p">[:,</span> <span class="mi">4</span><span class="p">][</span><span class="n">hill_mask</span><span class="p">]</span> <span class="o">==</span> <span class="n">all_targets</span><span class="p">[:,</span> <span class="mi">4</span><span class="p">][</span><span class="n">hill_mask</span><span class="p">])</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;hill_direction accuracy: </span><span class="si">{</span><span class="n">correct</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+ 
+    <span class="k">if</span> <span class="n">turn_mask</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+        <span class="n">mae</span> <span class="o">=</span> <span class="p">(</span><span class="n">pred_binary</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">][</span><span class="n">turn_mask</span><span class="p">]</span> <span class="o">-</span> <span class="n">all_targets</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">][</span><span class="n">turn_mask</span><span class="p">])</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;turn_angle average error: </span><span class="si">{</span><span class="n">mae</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">MAX_ANGLE_TURN</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> degrees&quot;</span><span class="p">)</span>
+ 
+    <span class="k">if</span> <span class="n">hill_mask</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+        <span class="n">mae</span> <span class="o">=</span> <span class="p">(</span><span class="n">pred_binary</span><span class="p">[:,</span> <span class="mi">5</span><span class="p">][</span><span class="n">hill_mask</span><span class="p">]</span> <span class="o">-</span> <span class="n">all_targets</span><span class="p">[:,</span> <span class="mi">5</span><span class="p">][</span><span class="n">hill_mask</span><span class="p">])</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;hill_angle average error: </span><span class="si">{</span><span class="n">mae</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">MAX_ANGLE_HILL</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> degrees&quot;</span><span class="p">)</span></div>
+
+ 
+    
+<div class="viewcode-block" id="train_once">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.bilstm.bilstm.train_once">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">train_once</span><span class="p">(</span><span class="n">sample_files</span><span class="p">,</span> <span class="n">val_ratio</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">42</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Train and evaluate one BiLSTM on a single stratified split for the given *seed*.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">seed</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+
+    <span class="n">files</span> <span class="o">=</span> <span class="n">sample_files</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;random.shuffle(files)</span>
+
+<span class="sd">    val_count = max(1, int(len(files) * val_ratio))</span>
+<span class="sd">    val_files = files[:val_count]</span>
+<span class="sd">    train_files = files[val_count:]&quot;&quot;&quot;</span>
+
+    <span class="n">train_files</span><span class="p">,</span> <span class="n">val_files</span> <span class="o">=</span> <span class="n">stratified_split</span><span class="p">(</span><span class="n">files</span><span class="p">,</span> <span class="n">val_ratio</span><span class="p">,</span> <span class="n">seed</span><span class="p">)</span>
+    
+    <span class="n">accel</span><span class="p">,</span> <span class="n">gyro</span><span class="p">,</span> <span class="n">mag</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">load_training_sample</span><span class="p">(</span><span class="n">sample_files</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    <span class="n">F</span> <span class="o">=</span> <span class="n">accel</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">input_size</span> <span class="o">=</span> <span class="n">F</span> <span class="o">*</span> <span class="mi">3</span> <span class="o">*</span> <span class="mi">3</span>
+
+    <span class="n">train_set</span> <span class="o">=</span> <span class="n">DriveDataset</span><span class="p">(</span><span class="n">train_files</span><span class="p">)</span>
+    <span class="n">val_set</span> <span class="o">=</span> <span class="n">DriveDataset</span><span class="p">(</span><span class="n">val_files</span><span class="p">)</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">BiLSTM</span><span class="p">(</span><span class="n">input_size</span><span class="p">)</span>
+    
+    <span class="n">train_model</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">train_set</span><span class="p">,</span> <span class="n">val_set</span><span class="p">,</span> <span class="n">print_info</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="n">model</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s1">&#39;bilstm_best.pth&#39;</span><span class="p">))</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span> <span class="s1">&#39;bilstm.pth&#39;</span><span class="p">)</span>  <span class="c1"># copy best to final</span>
+    
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Val files for this seed:&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">val_files</span><span class="p">:</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s1">&#39;labels&#39;</span><span class="p">]</span>
+        <span class="n">labeled</span> <span class="o">=</span> <span class="n">y</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span>
+        <span class="n">y_l</span> <span class="o">=</span> <span class="n">y</span><span class="p">[</span><span class="n">labeled</span><span class="p">]</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">f</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: turn=</span><span class="si">{</span><span class="n">y_l</span><span class="p">[:,</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">%  hill=</span><span class="si">{</span><span class="n">y_l</span><span class="p">[:,</span><span class="mi">3</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">%  straight=</span><span class="si">{</span><span class="n">y_l</span><span class="p">[:,</span><span class="mi">6</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+    <span class="n">evaluate_model</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">val_files</span><span class="p">)</span></div>
+
+    
+    
+<div class="viewcode-block" id="load_and_test">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.bilstm.bilstm.load_and_test">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_and_test</span><span class="p">(</span><span class="n">sample_files</span><span class="p">,</span> <span class="n">val_ratio</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">42</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Load ``bilstm.pth`` and evaluate it on the validation split for the given *seed*.&quot;&quot;&quot;</span>
+    <span class="n">files</span> <span class="o">=</span> <span class="n">sample_files</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">train_files</span><span class="p">,</span> <span class="n">val_files</span> <span class="o">=</span> <span class="n">stratified_split</span><span class="p">(</span><span class="n">files</span><span class="p">,</span> <span class="n">val_ratio</span><span class="p">,</span> <span class="n">seed</span><span class="p">)</span>  <span class="c1"># match train_once</span>
+
+    <span class="n">accel</span><span class="p">,</span> <span class="n">gyro</span><span class="p">,</span> <span class="n">mag</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">load_training_sample</span><span class="p">(</span><span class="n">sample_files</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    <span class="n">F</span> <span class="o">=</span> <span class="n">accel</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">input_size</span> <span class="o">=</span> <span class="n">F</span> <span class="o">*</span> <span class="mi">3</span> <span class="o">*</span> <span class="mi">3</span>
+
+    <span class="n">loaded_model</span> <span class="o">=</span> <span class="n">BiLSTM</span><span class="p">(</span><span class="n">input_size</span><span class="p">)</span>
+    <span class="n">state_dict</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">&quot;bilstm.pth&quot;</span><span class="p">)</span>
+    <span class="n">loaded_model</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">state_dict</span><span class="p">)</span>
+    <span class="n">evaluate_model</span><span class="p">(</span><span class="n">loaded_model</span><span class="p">,</span> <span class="n">val_files</span><span class="p">)</span></div>
+
+    
+    
+<div class="viewcode-block" id="main">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.bilstm.bilstm.main">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Main entry point of the program.</span>
+<span class="sd"> </span>
+<span class="sd">    Loads all training files and offers a choice between three modes:</span>
+<span class="sd">    1. Train the model once on a fixed split.</span>
+<span class="sd">    3. Load and test a previously saved model.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    
+    <span class="n">sample_files</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s1">&#39;../input_data&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s1">&#39;*_training.npz&#39;</span><span class="p">))</span>
+    <span class="n">mode</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="nb">input</span><span class="p">(</span><span class="s2">&quot;Choose mode:</span><span class="se">\n\n</span><span class="s2"> 1: Train model once</span><span class="se">\n</span><span class="s2"> 2: Train model with multiple seeds</span><span class="se">\n</span><span class="s2"> 3: Load and test saved model</span><span class="se">\n\n</span><span class="s2"> Type your choice: &quot;</span><span class="p">))</span>
+    
+    <span class="n">SEED</span> <span class="o">=</span> <span class="mi">123</span>
+    <span class="k">if</span> <span class="n">mode</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">train_once</span><span class="p">(</span><span class="n">sample_files</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="n">SEED</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">mode</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">seed</span> <span class="ow">in</span> <span class="p">[</span><span class="mi">42</span><span class="p">,</span> <span class="mi">123</span><span class="p">,</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">99</span><span class="p">,</span> <span class="mi">17</span><span class="p">]:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Seed </span><span class="si">{</span><span class="n">seed</span><span class="si">}</span><span class="s2"> ---&quot;</span><span class="p">)</span>
+            <span class="n">train_once</span><span class="p">(</span><span class="n">sample_files</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="n">seed</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">mode</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="n">load_and_test</span><span class="p">(</span><span class="n">sample_files</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="n">SEED</span><span class="p">)</span></div>
+
+ 
+ 
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../../index.html">AutoDNA</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../../modules.html">App Modules</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../ai.html">AI / Signal Processing (<code class="docutils literal notranslate"><span class="pre">ai/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../stm32.html">STM32 Data Logger (<code class="docutils literal notranslate"><span class="pre">stm32/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../tests.html">Test Suite (<code class="docutils literal notranslate"><span class="pre">tests/</span></code>)</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2026, AutoDNA Project.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.1.0</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

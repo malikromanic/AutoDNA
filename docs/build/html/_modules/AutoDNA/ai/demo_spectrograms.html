@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoDNA.ai.demo_spectrograms &#8212; AutoDNA 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../../_static/documentation_options.js?v=f2a433a1"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for AutoDNA.ai.demo_spectrograms</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Demo script for converting preprocessed sensor signals to spectrograms.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">AutoDNA.ai.spectrograms</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">load_sensor_data</span><span class="p">,</span>
+    <span class="n">estimate_sampling_rate</span><span class="p">,</span>
+    <span class="n">plot_spectrogram</span><span class="p">,</span>
+    <span class="n">convert_all_sensors_to_spectrograms</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<span class="n">DATA_FILE</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">with_name</span><span class="p">(</span><span class="s2">&quot;LOG010_preprocessed.npz&quot;</span><span class="p">)</span>
+<span class="n">OUTPUT_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">with_name</span><span class="p">(</span><span class="s2">&quot;spectrogram_examples&quot;</span><span class="p">)</span>
+<span class="n">AXIS_FIGSIZE</span> <span class="o">=</span> <span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>
+<span class="n">RGB_FIGSIZE</span> <span class="o">=</span> <span class="p">(</span><span class="mi">11</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="choose_stft_parameters">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.demo_spectrograms.choose_stft_parameters">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">choose_stft_parameters</span><span class="p">(</span><span class="n">fs</span><span class="p">,</span> <span class="n">sample_count</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Choose simple STFT parameters suitable for slower motion events.&quot;&quot;&quot;</span>
+    <span class="c1">#nastavitev velikosti okna za stft segmente</span>
+    <span class="n">nperseg</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="nb">round</span><span class="p">(</span><span class="n">fs</span> <span class="o">*</span> <span class="mf">2.0</span><span class="p">))</span>
+    <span class="c1">#omejevanje okna da ne preseze dolzine signala</span>
+    <span class="n">nperseg</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">sample_count</span><span class="p">,</span> <span class="n">nperseg</span><span class="p">))</span>
+
+    <span class="k">if</span> <span class="n">nperseg</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="n">nperseg</span> <span class="o">=</span> <span class="mi">2</span>
+
+    <span class="c1">#50% overlap da je casovni potek bolj gladek</span>
+    <span class="n">noverlap</span> <span class="o">=</span> <span class="n">nperseg</span> <span class="o">//</span> <span class="mi">2</span>
+
+    <span class="c1">#fft dolzina kot potenca 2 za stabilen izracun</span>
+    <span class="n">nfft</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="k">while</span> <span class="n">nfft</span> <span class="o">&lt;</span> <span class="n">nperseg</span><span class="p">:</span>
+        <span class="n">nfft</span> <span class="o">*=</span> <span class="mi">2</span>
+
+    <span class="k">return</span> <span class="n">nperseg</span><span class="p">,</span> <span class="n">noverlap</span><span class="p">,</span> <span class="n">nfft</span></div>
+
+
+
+<div class="viewcode-block" id="find_matching_sensors">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.demo_spectrograms.find_matching_sensors">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">find_matching_sensors</span><span class="p">(</span><span class="n">sensors</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Prefer accel/gyro/mag sensors if available, otherwise use all.&quot;&quot;&quot;</span>
+    <span class="c1">#podpora za vec tipov senzorjev iz naloge</span>
+    <span class="n">preferred</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;accel&quot;</span><span class="p">,</span> <span class="s2">&quot;gyro&quot;</span><span class="p">,</span> <span class="s2">&quot;mag&quot;</span><span class="p">]</span>
+    <span class="n">selected</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="n">lower_to_original</span> <span class="o">=</span> <span class="p">{</span><span class="n">name</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span> <span class="n">name</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">sensors</span><span class="o">.</span><span class="n">keys</span><span class="p">()}</span>
+
+    <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">preferred</span><span class="p">:</span>
+        <span class="n">exact</span> <span class="o">=</span> <span class="n">lower_to_original</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">exact</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">exact</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">selected</span><span class="p">:</span>
+            <span class="n">selected</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">exact</span><span class="p">)</span>
+            <span class="k">continue</span>
+
+        <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">sensors</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">name</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">and</span> <span class="n">name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">selected</span><span class="p">:</span>
+                <span class="n">selected</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+                <span class="k">break</span>
+
+    <span class="k">if</span> <span class="n">selected</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">selected</span>
+
+    <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="n">sensors</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span></div>
+
+
+
+<div class="viewcode-block" id="show_rgb_image">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.demo_spectrograms.show_rgb_image">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">show_rgb_image</span><span class="p">(</span><span class="n">sensor_name</span><span class="p">,</span> <span class="n">frequencies</span><span class="p">,</span> <span class="n">times</span><span class="p">,</span> <span class="n">rgb_image</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Display RGB packed spectrogram image with proper axes.&quot;&quot;&quot;</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="n">RGB_FIGSIZE</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">imshow</span><span class="p">(</span>
+        <span class="n">rgb_image</span><span class="p">,</span>
+        <span class="n">origin</span><span class="o">=</span><span class="s2">&quot;lower&quot;</span><span class="p">,</span>
+        <span class="n">aspect</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>
+        <span class="n">extent</span><span class="o">=</span><span class="p">[</span><span class="n">times</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">times</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">frequencies</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">frequencies</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]],</span>
+    <span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">sensor_name</span><span class="si">}</span><span class="s2">: RGB spectrogram (X-&gt;R, Y-&gt;G, Z-&gt;B)&quot;</span><span class="p">)</span>
+    <span class="c1">#osi ostanejo iste tudi pri rgb pogledu</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">xlabel</span><span class="p">(</span><span class="s2">&quot;Time (s)&quot;</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">ylabel</span><span class="p">(</span><span class="s2">&quot;Frequency (Hz)&quot;</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span></div>
+
+
+
+<div class="viewcode-block" id="save_axis_spectrogram_image">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.demo_spectrograms.save_axis_spectrogram_image">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">save_axis_spectrogram_image</span><span class="p">(</span><span class="n">sensor_name</span><span class="p">,</span> <span class="n">axis</span><span class="p">,</span> <span class="n">frequencies</span><span class="p">,</span> <span class="n">times</span><span class="p">,</span> <span class="n">spectrogram</span><span class="p">,</span> <span class="n">output_dir</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Save one axis spectrogram image with labeled axes.&quot;&quot;&quot;</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="n">AXIS_FIGSIZE</span><span class="p">)</span>
+    <span class="n">mesh</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">pcolormesh</span><span class="p">(</span><span class="n">times</span><span class="p">,</span> <span class="n">frequencies</span><span class="p">,</span> <span class="n">spectrogram</span><span class="p">,</span> <span class="n">shading</span><span class="o">=</span><span class="s2">&quot;gouraud&quot;</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;viridis&quot;</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">sensor_name</span><span class="si">}</span><span class="s2"> - </span><span class="si">{</span><span class="n">axis</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span><span class="si">}</span><span class="s2"> axis spectrogram&quot;</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">xlabel</span><span class="p">(</span><span class="s2">&quot;Time (s)&quot;</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">ylabel</span><span class="p">(</span><span class="s2">&quot;Frequency (Hz)&quot;</span><span class="p">)</span>
+    <span class="n">cbar</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">colorbar</span><span class="p">(</span><span class="n">mesh</span><span class="p">)</span>
+    <span class="n">cbar</span><span class="o">.</span><span class="n">set_label</span><span class="p">(</span><span class="s2">&quot;Amplitude (dB)&quot;</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+
+    <span class="n">output_file</span> <span class="o">=</span> <span class="n">output_dir</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">sensor_name</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">axis</span><span class="si">}</span><span class="s2">_spectrogram.png&quot;</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">savefig</span><span class="p">(</span><span class="n">output_file</span><span class="p">,</span> <span class="n">dpi</span><span class="o">=</span><span class="mi">150</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">output_file</span></div>
+
+
+
+<div class="viewcode-block" id="main">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.demo_spectrograms.main">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Load a preprocessed recording, build spectrograms, and display them per sensor.&quot;&quot;&quot;</span>
+    <span class="c1">#load preprocessed podatkov za pretvorbo v 2d</span>
+    <span class="n">sensors</span> <span class="o">=</span> <span class="n">load_sensor_data</span><span class="p">(</span><span class="n">DATA_FILE</span><span class="p">)</span>
+
+    <span class="n">first_sensor_name</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="nb">iter</span><span class="p">(</span><span class="n">sensors</span><span class="p">))</span>
+    <span class="n">first_sensor</span> <span class="o">=</span> <span class="n">sensors</span><span class="p">[</span><span class="n">first_sensor_name</span><span class="p">]</span>
+    <span class="c1">#ocena frekvence vzorcenja iz timestampov</span>
+    <span class="n">fs</span> <span class="o">=</span> <span class="n">estimate_sampling_rate</span><span class="p">(</span><span class="n">first_sensor</span><span class="p">[</span><span class="s2">&quot;ts&quot;</span><span class="p">])</span>
+
+    <span class="n">sample_count</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">first_sensor</span><span class="p">[</span><span class="s2">&quot;x&quot;</span><span class="p">])</span>
+    <span class="n">nperseg</span><span class="p">,</span> <span class="n">noverlap</span><span class="p">,</span> <span class="n">nfft</span> <span class="o">=</span> <span class="n">choose_stft_parameters</span><span class="p">(</span><span class="n">fs</span><span class="p">,</span> <span class="n">sample_count</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Loaded sensors:&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">sensor_name</span><span class="p">,</span> <span class="n">sensor_data</span> <span class="ow">in</span> <span class="n">sensors</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">sensor_name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">sensor_data</span><span class="p">[</span><span class="s1">&#39;ts&#39;</span><span class="p">])</span><span class="si">}</span><span class="s2"> samples&quot;</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Estimated sampling rate: </span><span class="si">{</span><span class="n">fs</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> Hz&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;STFT parameters:&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- window size (nperseg): </span><span class="si">{</span><span class="n">nperseg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- overlap (noverlap): </span><span class="si">{</span><span class="n">noverlap</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- FFT length (nfft): </span><span class="si">{</span><span class="n">nfft</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">converted</span> <span class="o">=</span> <span class="n">convert_all_sensors_to_spectrograms</span><span class="p">(</span>
+        <span class="n">sensors</span><span class="o">=</span><span class="n">sensors</span><span class="p">,</span>
+        <span class="n">fs</span><span class="o">=</span><span class="n">fs</span><span class="p">,</span>
+        <span class="n">nperseg</span><span class="o">=</span><span class="n">nperseg</span><span class="p">,</span>
+        <span class="n">noverlap</span><span class="o">=</span><span class="n">noverlap</span><span class="p">,</span>
+        <span class="n">nfft</span><span class="o">=</span><span class="n">nfft</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">selected_sensors</span> <span class="o">=</span> <span class="n">find_matching_sensors</span><span class="p">(</span><span class="n">sensors</span><span class="p">)</span>
+
+    <span class="n">OUTPUT_DIR</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">sensor_name</span> <span class="ow">in</span> <span class="n">selected_sensors</span><span class="p">:</span>
+        <span class="c1">#za vsak senzor pripravimo svoj 2d vhod</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">converted</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">]</span>
+        <span class="n">frequencies</span> <span class="o">=</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;frequencies&quot;</span><span class="p">]</span>
+        <span class="n">times</span> <span class="o">=</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;times&quot;</span><span class="p">]</span>
+        <span class="n">spectrograms</span> <span class="o">=</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;spectrograms&quot;</span><span class="p">]</span>
+        <span class="n">rgb_image</span> <span class="o">=</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;rgb_image&quot;</span><span class="p">]</span>
+
+        <span class="c1">#prikaz osi spektrogramov kjer se vidi dogodek</span>
+        <span class="k">for</span> <span class="n">axis</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;x&quot;</span><span class="p">,</span> <span class="s2">&quot;y&quot;</span><span class="p">,</span> <span class="s2">&quot;z&quot;</span><span class="p">]:</span>
+            <span class="n">plot_spectrogram</span><span class="p">(</span>
+                <span class="n">frequencies</span><span class="p">,</span>
+                <span class="n">times</span><span class="p">,</span>
+                <span class="n">spectrograms</span><span class="p">[</span><span class="n">axis</span><span class="p">],</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">sensor_name</span><span class="si">}</span><span class="s2"> - </span><span class="si">{</span><span class="n">axis</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span><span class="si">}</span><span class="s2"> axis spectrogram&quot;</span><span class="p">,</span>
+            <span class="p">)</span>
+
+            <span class="c1">#dodaten primer na disk za vsako os</span>
+<span class="w">            </span><span class="sd">&quot;&quot;&quot;axis_output = save_axis_spectrogram_image(</span>
+<span class="sd">                sensor_name=sensor_name,</span>
+<span class="sd">                axis=axis,</span>
+<span class="sd">                frequencies=frequencies,</span>
+<span class="sd">                times=times,</span>
+<span class="sd">                spectrogram=spectrograms[axis],</span>
+<span class="sd">                output_dir=OUTPUT_DIR,</span>
+<span class="sd">            )</span>
+<span class="sd">            print(f&quot;Saved: {axis_output.name}&quot;)&quot;&quot;&quot;</span>
+
+        <span class="n">show_rgb_image</span><span class="p">(</span><span class="n">sensor_name</span><span class="p">,</span> <span class="n">frequencies</span><span class="p">,</span> <span class="n">times</span><span class="p">,</span> <span class="n">rgb_image</span><span class="p">)</span>
+
+        <span class="c1">#shrani primer slike za porocilo ali ucenje mreze</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;output_file = OUTPUT_DIR / f&quot;{sensor_name}_rgb_spectrogram.png&quot;</span>
+<span class="sd">        save_spectrogram_image(rgb_image, output_file)</span>
+<span class="sd">        print(f&quot;Saved: {output_file.name}&quot;)&quot;&quot;&quot;</span></div>
+
+
+    <span class="c1">#todo dodati avtomatski izbor najboljsih odsekov z dogodkom</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../index.html">AutoDNA</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules.html">App Modules</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../ai.html">AI / Signal Processing (<code class="docutils literal notranslate"><span class="pre">ai/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../stm32.html">STM32 Data Logger (<code class="docutils literal notranslate"><span class="pre">stm32/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tests.html">Test Suite (<code class="docutils literal notranslate"><span class="pre">tests/</span></code>)</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2026, AutoDNA Project.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.1.0</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

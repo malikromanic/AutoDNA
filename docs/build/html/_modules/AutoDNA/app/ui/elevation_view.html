@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoDNA.app.ui.elevation_view &#8212; AutoDNA 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../../../_static/documentation_options.js?v=f2a433a1"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+   
+  <link rel="stylesheet" href="../../../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for AutoDNA.app.ui.elevation_view</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Elevation page: DEM elevation/grade profile and turn/hill distance breakdown.</span>
+
+<span class="sd">The grade subplot under the elevation chart is currently commented out</span>
+<span class="sd">in :meth:`ElevationView._update_profile_chart` (kept for a possible</span>
+<span class="sd">future re-enable); only the elevation profile itself is drawn.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">PyQt6.QtWidgets</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">QWidget</span><span class="p">,</span> <span class="n">QVBoxLayout</span><span class="p">,</span> <span class="n">QHBoxLayout</span><span class="p">,</span> <span class="n">QLabel</span><span class="p">,</span> <span class="n">QFrame</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PyQt6.QtCore</span><span class="w"> </span><span class="kn">import</span> <span class="n">Qt</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PyQt6.QtGui</span><span class="w"> </span><span class="kn">import</span> <span class="n">QFont</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">AutoDNA.app.gps_analysis</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">TURN_ENTER_DEG</span><span class="p">,</span> <span class="n">TURN_WINDOW_M</span><span class="p">,</span> <span class="n">HILL_GRADE_THRESHOLD</span><span class="p">,</span> <span class="n">HILL_GRADE_WINDOW_M</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">matplotlib.backends.backend_qtagg</span><span class="w"> </span><span class="kn">import</span> <span class="n">FigureCanvasQTAgg</span> <span class="k">as</span> <span class="n">FigureCanvas</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">matplotlib.figure</span><span class="w"> </span><span class="kn">import</span> <span class="n">Figure</span>
+    <span class="n">HAS_MATPLOTLIB</span> <span class="o">=</span> <span class="kc">True</span>
+<span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+    <span class="n">HAS_MATPLOTLIB</span> <span class="o">=</span> <span class="kc">False</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_info_card</span><span class="p">(</span><span class="n">title</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">QFrame</span><span class="p">:</span>
+    <span class="n">frame</span> <span class="o">=</span> <span class="n">QFrame</span><span class="p">()</span>
+    <span class="n">frame</span><span class="o">.</span><span class="n">setStyleSheet</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">        QFrame {</span>
+<span class="s2">            background-color: #f8f9fa;</span>
+<span class="s2">            border: 1px solid #dee2e6;</span>
+<span class="s2">            border-radius: 8px;</span>
+<span class="s2">        }</span>
+<span class="s2">    &quot;&quot;&quot;</span><span class="p">)</span>
+    <span class="n">layout</span> <span class="o">=</span> <span class="n">QVBoxLayout</span><span class="p">(</span><span class="n">frame</span><span class="p">)</span>
+    <span class="n">layout</span><span class="o">.</span><span class="n">setContentsMargins</span><span class="p">(</span><span class="mi">14</span><span class="p">,</span> <span class="mi">12</span><span class="p">,</span> <span class="mi">14</span><span class="p">,</span> <span class="mi">12</span><span class="p">)</span>
+    <span class="n">layout</span><span class="o">.</span><span class="n">setSpacing</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+
+    <span class="n">t</span> <span class="o">=</span> <span class="n">QLabel</span><span class="p">(</span><span class="n">title</span><span class="p">)</span>
+    <span class="n">t</span><span class="o">.</span><span class="n">setStyleSheet</span><span class="p">(</span><span class="s2">&quot;font-weight: bold; font-size: 12px; color: #333; border: none;&quot;</span><span class="p">)</span>
+    <span class="n">layout</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">val</span> <span class="ow">in</span> <span class="n">items</span><span class="p">:</span>
+        <span class="n">row</span> <span class="o">=</span> <span class="n">QLabel</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;&lt;span style=&#39;color:#666&#39;&gt;</span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s2">:&lt;/span&gt;&amp;nbsp;&lt;span style=&#39;color:#000&#39;&gt;</span><span class="si">{</span><span class="n">val</span><span class="si">}</span><span class="s2">&lt;/span&gt;&quot;</span><span class="p">)</span>
+        <span class="n">row</span><span class="o">.</span><span class="n">setStyleSheet</span><span class="p">(</span><span class="s2">&quot;font-size: 11px; border: none;&quot;</span><span class="p">)</span>
+        <span class="n">row</span><span class="o">.</span><span class="n">setTextFormat</span><span class="p">(</span><span class="n">Qt</span><span class="o">.</span><span class="n">TextFormat</span><span class="o">.</span><span class="n">RichText</span><span class="p">)</span>
+        <span class="n">layout</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="n">row</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">frame</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_metrics_card</span><span class="p">(</span><span class="n">title</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">metrics</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">QFrame</span><span class="p">:</span>
+    <span class="n">frame</span> <span class="o">=</span> <span class="n">QFrame</span><span class="p">()</span>
+    <span class="n">frame</span><span class="o">.</span><span class="n">setStyleSheet</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">        QFrame {</span>
+<span class="s2">            background-color: #f0f8ff;</span>
+<span class="s2">            border: 1px solid #b0c4de;</span>
+<span class="s2">            border-radius: 8px;</span>
+<span class="s2">        }</span>
+<span class="s2">    &quot;&quot;&quot;</span><span class="p">)</span>
+    <span class="n">layout</span> <span class="o">=</span> <span class="n">QVBoxLayout</span><span class="p">(</span><span class="n">frame</span><span class="p">)</span>
+    <span class="n">layout</span><span class="o">.</span><span class="n">setContentsMargins</span><span class="p">(</span><span class="mi">14</span><span class="p">,</span> <span class="mi">12</span><span class="p">,</span> <span class="mi">14</span><span class="p">,</span> <span class="mi">12</span><span class="p">)</span>
+    <span class="n">layout</span><span class="o">.</span><span class="n">setSpacing</span><span class="p">(</span><span class="mi">6</span><span class="p">)</span>
+
+    <span class="n">t</span> <span class="o">=</span> <span class="n">QLabel</span><span class="p">(</span><span class="n">title</span><span class="p">)</span>
+    <span class="n">t</span><span class="o">.</span><span class="n">setStyleSheet</span><span class="p">(</span><span class="s2">&quot;font-weight: bold; font-size: 12px; color: #333; border: none;&quot;</span><span class="p">)</span>
+    <span class="n">layout</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+
+    <span class="n">frame</span><span class="o">.</span><span class="n">value_labels</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">val</span> <span class="ow">in</span> <span class="n">metrics</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">row_layout</span> <span class="o">=</span> <span class="n">QHBoxLayout</span><span class="p">()</span>
+        <span class="n">row_layout</span><span class="o">.</span><span class="n">setContentsMargins</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="n">QLabel</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s2">:&quot;</span><span class="p">)</span>
+        <span class="n">k</span><span class="o">.</span><span class="n">setStyleSheet</span><span class="p">(</span><span class="s2">&quot;font-size: 11px; color: #555; border: none;&quot;</span><span class="p">)</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="n">QLabel</span><span class="p">(</span><span class="n">val</span><span class="p">)</span>
+        <span class="n">v</span><span class="o">.</span><span class="n">setStyleSheet</span><span class="p">(</span><span class="s2">&quot;font-size: 11px; font-weight: bold; color: #0066cc; border: none;&quot;</span><span class="p">)</span>
+        <span class="n">row_layout</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="n">k</span><span class="p">)</span>
+        <span class="n">row_layout</span><span class="o">.</span><span class="n">addStretch</span><span class="p">()</span>
+        <span class="n">row_layout</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+        <span class="n">layout</span><span class="o">.</span><span class="n">addLayout</span><span class="p">(</span><span class="n">row_layout</span><span class="p">)</span>
+        <span class="n">frame</span><span class="o">.</span><span class="n">value_labels</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">v</span>
+
+    <span class="k">return</span> <span class="n">frame</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_distance_per_class</span><span class="p">(</span><span class="n">preds</span><span class="p">,</span> <span class="n">cum_m</span><span class="p">,</span> <span class="n">n_classes</span><span class="o">=</span><span class="mi">3</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Metres travelled in each class (attribute each step to its start point).&quot;&quot;&quot;</span>
+    <span class="n">preds</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">preds</span><span class="p">)</span>
+    <span class="n">cum_m</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">cum_m</span><span class="p">)</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_classes</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">preds</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">):</span>
+        <span class="n">out</span><span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">preds</span><span class="p">[</span><span class="n">i</span><span class="p">])]</span> <span class="o">+=</span> <span class="n">cum_m</span><span class="p">[</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">cum_m</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">out</span>
+
+
+<div class="viewcode-block" id="ElevationView">
+<a class="viewcode-back" href="../../../../modules.html#AutoDNA.app.ui.elevation_view.ElevationView">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ElevationView</span><span class="p">(</span><span class="n">QWidget</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Elevation profile, road grade, and turn/hill distribution.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">drive_data</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_create_ui</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_create_ui</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">outer</span> <span class="o">=</span> <span class="n">QVBoxLayout</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+        <span class="n">outer</span><span class="o">.</span><span class="n">setContentsMargins</span><span class="p">(</span><span class="mi">20</span><span class="p">,</span> <span class="mi">20</span><span class="p">,</span> <span class="mi">20</span><span class="p">,</span> <span class="mi">20</span><span class="p">)</span>
+        <span class="n">outer</span><span class="o">.</span><span class="n">setSpacing</span><span class="p">(</span><span class="mi">12</span><span class="p">)</span>
+
+        <span class="n">title</span> <span class="o">=</span> <span class="n">QLabel</span><span class="p">(</span><span class="s2">&quot;Elevation &amp; Grade&quot;</span><span class="p">)</span>
+        <span class="n">title_font</span> <span class="o">=</span> <span class="n">QFont</span><span class="p">()</span>
+        <span class="n">title_font</span><span class="o">.</span><span class="n">setPointSize</span><span class="p">(</span><span class="mi">20</span><span class="p">)</span>
+        <span class="n">title_font</span><span class="o">.</span><span class="n">setBold</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">title</span><span class="o">.</span><span class="n">setFont</span><span class="p">(</span><span class="n">title_font</span><span class="p">)</span>
+        <span class="n">outer</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="n">title</span><span class="p">)</span>
+
+        <span class="n">subtitle</span> <span class="o">=</span> <span class="n">QLabel</span><span class="p">(</span><span class="s2">&quot;DEM-based road grade and GPS event distribution&quot;</span><span class="p">)</span>
+        <span class="n">subtitle</span><span class="o">.</span><span class="n">setStyleSheet</span><span class="p">(</span><span class="s2">&quot;color: #888888; font-size: 12px;&quot;</span><span class="p">)</span>
+        <span class="n">outer</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="n">subtitle</span><span class="p">)</span>
+
+        <span class="c1"># ── Top row: method info + live metrics ──────────────────────────────</span>
+        <span class="n">info_row</span> <span class="o">=</span> <span class="n">QHBoxLayout</span><span class="p">()</span>
+        <span class="n">info_row</span><span class="o">.</span><span class="n">setSpacing</span><span class="p">(</span><span class="mi">12</span><span class="p">)</span>
+
+        <span class="n">method_card</span> <span class="o">=</span> <span class="n">_make_info_card</span><span class="p">(</span><span class="s2">&quot;Detection Method&quot;</span><span class="p">,</span> <span class="p">[</span>
+            <span class="p">(</span><span class="s2">&quot;Turns&quot;</span><span class="p">,</span>     <span class="s2">&quot;GPS heading change&quot;</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">&quot;Turn rule&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;≥ </span><span class="si">{</span><span class="n">TURN_ENTER_DEG</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">° over </span><span class="si">{</span><span class="n">TURN_WINDOW_M</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> m&quot;</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">&quot;Hills&quot;</span><span class="p">,</span>     <span class="s2">&quot;DEM ground-elevation grade&quot;</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">&quot;Hill rule&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;|grade| ≥ </span><span class="si">{</span><span class="n">HILL_GRADE_THRESHOLD</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">% over </span><span class="si">{</span><span class="n">HILL_GRADE_WINDOW_M</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> m&quot;</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">&quot;Altitude&quot;</span><span class="p">,</span>  <span class="s2">&quot;DEM lookup (device GPS altitude ignored)&quot;</span><span class="p">),</span>
+        <span class="p">])</span>
+        <span class="n">info_row</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="n">method_card</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_metrics_card</span> <span class="o">=</span> <span class="n">_make_metrics_card</span><span class="p">(</span><span class="s2">&quot;Live Statistics&quot;</span><span class="p">,</span> <span class="p">{</span>
+            <span class="s2">&quot;GPS points&quot;</span><span class="p">:</span>     <span class="s2">&quot;—&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;Distance&quot;</span><span class="p">:</span>       <span class="s2">&quot;—&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;Turn segments&quot;</span><span class="p">:</span>  <span class="s2">&quot;—&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;Hill segments&quot;</span><span class="p">:</span>  <span class="s2">&quot;—&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;Elevation gain&quot;</span><span class="p">:</span> <span class="s2">&quot;—&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;Max grade&quot;</span><span class="p">:</span>      <span class="s2">&quot;—&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;Avg speed&quot;</span><span class="p">:</span>      <span class="s2">&quot;—&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;Source&quot;</span><span class="p">:</span>         <span class="s2">&quot;—&quot;</span><span class="p">,</span>
+        <span class="p">})</span>
+        <span class="n">info_row</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_metrics_card</span><span class="p">)</span>
+
+        <span class="n">outer</span><span class="o">.</span><span class="n">addLayout</span><span class="p">(</span><span class="n">info_row</span><span class="p">)</span>
+
+        <span class="c1"># ── Elevation + grade chart ──────────────────────────────────────────</span>
+        <span class="n">prof_title</span> <span class="o">=</span> <span class="n">QLabel</span><span class="p">(</span><span class="s2">&quot;Elevation &amp; Grade Over Distance&quot;</span><span class="p">)</span>
+        <span class="n">prof_title</span><span class="o">.</span><span class="n">setStyleSheet</span><span class="p">(</span><span class="s2">&quot;font-weight: bold; font-size: 13px; color: #2c3e50; padding-bottom: 4px;&quot;</span><span class="p">)</span>
+        <span class="n">outer</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="n">prof_title</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">HAS_MATPLOTLIB</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_prof_figure</span> <span class="o">=</span> <span class="n">Figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="mf">3.4</span><span class="p">),</span> <span class="n">facecolor</span><span class="o">=</span><span class="s1">&#39;#ffffff&#39;</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_prof_canvas</span> <span class="o">=</span> <span class="n">FigureCanvas</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_prof_figure</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_prof_canvas</span><span class="o">.</span><span class="n">setMinimumHeight</span><span class="p">(</span><span class="mi">230</span><span class="p">)</span>
+            <span class="n">outer</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_prof_canvas</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">outer</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="n">QLabel</span><span class="p">(</span><span class="s2">&quot;Install matplotlib to see charts.&quot;</span><span class="p">))</span>
+
+        <span class="c1"># ── Distribution chart ───────────────────────────────────────────────</span>
+        <span class="n">dist_title</span> <span class="o">=</span> <span class="n">QLabel</span><span class="p">(</span><span class="s2">&quot;Distance by Class&quot;</span><span class="p">)</span>
+        <span class="n">dist_title</span><span class="o">.</span><span class="n">setStyleSheet</span><span class="p">(</span><span class="s2">&quot;font-weight: bold; font-size: 13px; color: #2c3e50; padding-bottom: 4px;&quot;</span><span class="p">)</span>
+        <span class="n">outer</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="n">dist_title</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">HAS_MATPLOTLIB</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_dist_figure</span> <span class="o">=</span> <span class="n">Figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="mf">2.8</span><span class="p">),</span> <span class="n">facecolor</span><span class="o">=</span><span class="s1">&#39;#ffffff&#39;</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_dist_canvas</span> <span class="o">=</span> <span class="n">FigureCanvas</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_dist_figure</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_dist_canvas</span><span class="o">.</span><span class="n">setMinimumHeight</span><span class="p">(</span><span class="mi">190</span><span class="p">)</span>
+            <span class="n">outer</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_dist_canvas</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">outer</span><span class="o">.</span><span class="n">addWidget</span><span class="p">(</span><span class="n">QLabel</span><span class="p">(</span><span class="s2">&quot;Install matplotlib to see charts.&quot;</span><span class="p">))</span>
+
+        <span class="n">outer</span><span class="o">.</span><span class="n">addStretch</span><span class="p">()</span>
+
+    <span class="c1"># ── Data update ──────────────────────────────────────────────────────────</span>
+<div class="viewcode-block" id="ElevationView.set_drive_data">
+<a class="viewcode-back" href="../../../../modules.html#AutoDNA.app.ui.elevation_view.ElevationView.set_drive_data">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_drive_data</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">drive_data</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Refresh the Live Statistics card and both charts for a newly loaded drive.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">drive_data</span> <span class="o">=</span> <span class="n">drive_data</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_update_metrics</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_update_profile_chart</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_update_distribution_chart</span><span class="p">()</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_update_metrics</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">AutoDNA.app.ui.dashboard_view</span><span class="w"> </span><span class="kn">import</span> <span class="n">_count_segments</span>
+        <span class="n">d</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">drive_data</span>
+        <span class="n">lv</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_metrics_card</span><span class="o">.</span><span class="n">value_labels</span>
+        <span class="n">avg_speed</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">drive_distance_km</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">drive_duration_sec</span> <span class="o">/</span> <span class="mi">3600</span><span class="p">,</span> <span class="mf">1e-3</span><span class="p">)</span>
+        <span class="n">lv</span><span class="p">[</span><span class="s2">&quot;GPS points&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">setText</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">n_points</span><span class="p">))</span>
+        <span class="n">lv</span><span class="p">[</span><span class="s2">&quot;Distance&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">setText</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">d</span><span class="o">.</span><span class="n">drive_distance_km</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> km&quot;</span><span class="p">)</span>
+        <span class="n">lv</span><span class="p">[</span><span class="s2">&quot;Turn segments&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">setText</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">_count_segments</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">turn_preds</span><span class="p">)))</span>
+        <span class="n">lv</span><span class="p">[</span><span class="s2">&quot;Hill segments&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">setText</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">_count_segments</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">hill_preds</span><span class="p">)))</span>
+        <span class="n">lv</span><span class="p">[</span><span class="s2">&quot;Elevation gain&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">setText</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;+</span><span class="si">{</span><span class="n">d</span><span class="o">.</span><span class="n">elevation_gain_m</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> / -</span><span class="si">{</span><span class="n">d</span><span class="o">.</span><span class="n">elevation_loss_m</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> m&quot;</span><span class="p">)</span>
+        <span class="n">lv</span><span class="p">[</span><span class="s2">&quot;Max grade&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">setText</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">grade_pct</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+        <span class="n">lv</span><span class="p">[</span><span class="s2">&quot;Avg speed&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">setText</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">avg_speed</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> km/h&quot;</span><span class="p">)</span>
+        <span class="n">lv</span><span class="p">[</span><span class="s2">&quot;Source&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">setText</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">elevation_source</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_update_profile_chart</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">HAS_MATPLOTLIB</span> <span class="ow">or</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">drive_data</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="n">d</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">drive_data</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">cum_distance_m</span> <span class="o">/</span> <span class="mf">1000.0</span>  <span class="c1"># km</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_prof_figure</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+        <span class="n">ax1</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prof_figure</span><span class="o">.</span><span class="n">add_subplot</span><span class="p">(</span><span class="mi">211</span><span class="p">)</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">d</span><span class="o">.</span><span class="n">elevation_sm</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;#2c3e50&#39;</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">1.6</span><span class="p">)</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">fill_between</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">d</span><span class="o">.</span><span class="n">elevation_sm</span><span class="p">,</span> <span class="n">d</span><span class="o">.</span><span class="n">elevation_sm</span><span class="o">.</span><span class="n">min</span><span class="p">(),</span>
+                         <span class="n">where</span><span class="o">=</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">hill_preds</span> <span class="o">==</span> <span class="mi">1</span><span class="p">),</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;#2e7d32&#39;</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.25</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;Uphill&#39;</span><span class="p">)</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">fill_between</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">d</span><span class="o">.</span><span class="n">elevation_sm</span><span class="p">,</span> <span class="n">d</span><span class="o">.</span><span class="n">elevation_sm</span><span class="o">.</span><span class="n">min</span><span class="p">(),</span>
+                         <span class="n">where</span><span class="o">=</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">hill_preds</span> <span class="o">==</span> <span class="mi">2</span><span class="p">),</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;#6a1b9a&#39;</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.25</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;Downhill&#39;</span><span class="p">)</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Elevation (m)&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">9</span><span class="p">)</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="s1">&#39;DEM Elevation Profile&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">pad</span><span class="o">=</span><span class="mi">6</span><span class="p">)</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">fontsize</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">loc</span><span class="o">=</span><span class="s1">&#39;upper right&#39;</span><span class="p">)</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="kc">True</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.25</span><span class="p">)</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">tick_params</span><span class="p">(</span><span class="n">labelsize</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;ax2 = self._prof_figure.add_subplot(212, sharex=ax1)  </span>
+<span class="sd">        ax2.plot(x, d.grade_pct, color=&#39;#e67e22&#39;, linewidth=1.2)</span>
+<span class="sd">        ax2.axhline(HILL_GRADE_THRESHOLD, color=&#39;#2e7d32&#39;, linestyle=&#39;--&#39;, linewidth=1, alpha=0.6)</span>
+<span class="sd">        ax2.axhline(-HILL_GRADE_THRESHOLD, color=&#39;#6a1b9a&#39;, linestyle=&#39;--&#39;, linewidth=1, alpha=0.6)</span>
+<span class="sd">        ax2.axhline(0, color=&#39;#999&#39;, linewidth=0.8)</span>
+<span class="sd">        ax2.set_xlabel(&#39;Distance (km)&#39;, fontsize=9)</span>
+<span class="sd">        ax2.set_ylabel(&#39;Grade (%)&#39;, fontsize=9)</span>
+<span class="sd">        ax2.grid(True, alpha=0.25)</span>
+<span class="sd">        ax2.tick_params(labelsize=8)&quot;&quot;&quot;</span>
+
+        <span class="c1">#self._prof_figure.tight_layout(pad=1.0)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_prof_figure</span><span class="o">.</span><span class="n">subplots_adjust</span><span class="p">(</span><span class="n">top</span><span class="o">=</span><span class="mf">0.85</span><span class="p">,</span> <span class="n">bottom</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">left</span><span class="o">=</span><span class="mf">0.10</span><span class="p">,</span> <span class="n">right</span><span class="o">=</span><span class="mf">0.95</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_prof_canvas</span><span class="o">.</span><span class="n">draw</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_update_distribution_chart</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">HAS_MATPLOTLIB</span> <span class="ow">or</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">drive_data</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="n">d</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">drive_data</span>
+        <span class="n">turn_km</span> <span class="o">=</span> <span class="n">_distance_per_class</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">turn_preds</span><span class="p">,</span> <span class="n">d</span><span class="o">.</span><span class="n">cum_distance_m</span><span class="p">)</span> <span class="o">/</span> <span class="mf">1000.0</span>
+        <span class="n">hill_km</span> <span class="o">=</span> <span class="n">_distance_per_class</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">hill_preds</span><span class="p">,</span> <span class="n">d</span><span class="o">.</span><span class="n">cum_distance_m</span><span class="p">)</span> <span class="o">/</span> <span class="mf">1000.0</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_dist_figure</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+
+        <span class="n">ax1</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dist_figure</span><span class="o">.</span><span class="n">add_subplot</span><span class="p">(</span><span class="mi">121</span><span class="p">)</span>
+        <span class="n">bars</span> <span class="o">=</span> <span class="n">ax1</span><span class="o">.</span><span class="n">bar</span><span class="p">([</span><span class="s2">&quot;Straight&quot;</span><span class="p">,</span> <span class="s2">&quot;Left&quot;</span><span class="p">,</span> <span class="s2">&quot;Right&quot;</span><span class="p">],</span> <span class="n">turn_km</span><span class="p">,</span>
+                       <span class="n">color</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;#9e9e9e&#39;</span><span class="p">,</span> <span class="s1">&#39;#1565c0&#39;</span><span class="p">,</span> <span class="s1">&#39;#e65100&#39;</span><span class="p">],</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.9</span><span class="p">)</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">bar_label</span><span class="p">(</span><span class="n">bars</span><span class="p">,</span> <span class="n">fmt</span><span class="o">=</span><span class="s1">&#39;</span><span class="si">%.2f</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="s1">&#39;Turns (km)&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Distance (km)&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">9</span><span class="p">)</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">tick_params</span><span class="p">(</span><span class="n">labelsize</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+        <span class="n">ax1</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="kc">True</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.25</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="s1">&#39;y&#39;</span><span class="p">)</span>
+
+        <span class="n">ax2</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dist_figure</span><span class="o">.</span><span class="n">add_subplot</span><span class="p">(</span><span class="mi">122</span><span class="p">)</span>
+        <span class="n">bars2</span> <span class="o">=</span> <span class="n">ax2</span><span class="o">.</span><span class="n">bar</span><span class="p">([</span><span class="s2">&quot;Flat&quot;</span><span class="p">,</span> <span class="s2">&quot;Uphill&quot;</span><span class="p">,</span> <span class="s2">&quot;Downhill&quot;</span><span class="p">],</span> <span class="n">hill_km</span><span class="p">,</span>
+                        <span class="n">color</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;#9e9e9e&#39;</span><span class="p">,</span> <span class="s1">&#39;#2e7d32&#39;</span><span class="p">,</span> <span class="s1">&#39;#6a1b9a&#39;</span><span class="p">],</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.9</span><span class="p">)</span>
+        <span class="n">ax2</span><span class="o">.</span><span class="n">bar_label</span><span class="p">(</span><span class="n">bars2</span><span class="p">,</span> <span class="n">fmt</span><span class="o">=</span><span class="s1">&#39;</span><span class="si">%.2f</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+        <span class="n">ax2</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="s1">&#39;Hills (km)&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+        <span class="n">ax2</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;Distance (km)&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">9</span><span class="p">)</span>
+        <span class="n">ax2</span><span class="o">.</span><span class="n">tick_params</span><span class="p">(</span><span class="n">labelsize</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+        <span class="n">ax2</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="kc">True</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.25</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="s1">&#39;y&#39;</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_dist_figure</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">(</span><span class="n">pad</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_dist_canvas</span><span class="o">.</span><span class="n">draw</span><span class="p">()</span></div>
+
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../../index.html">AutoDNA</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../../modules.html">App Modules</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../ai.html">AI / Signal Processing (<code class="docutils literal notranslate"><span class="pre">ai/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../stm32.html">STM32 Binary Parser (<code class="docutils literal notranslate"><span class="pre">stm32/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../tests.html">Test Suite (<code class="docutils literal notranslate"><span class="pre">tests/</span></code>)</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2026, AutoDNA Project.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.1.0</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

@@ -320,6 +320,7 @@ def plot_axis_correction(parsed_dir, my_file_num=10, teammate_file_num=3):
     import matplotlib.pyplot as plt
 
     def load_and_swap(log_num):
+        """Load recording *log_num* and apply its device-specific axis correction."""
         # find the file
         matches = list(parsed_dir.glob(f'*{log_num:03d}*.npz'))
         if not matches:
@@ -547,6 +548,12 @@ def sanity_check_sensors(parsed_dir, log_num):
 
 
 def main():
+    """Run axis-correction and sensor sanity plots, then export training samples.
+
+    The verification plots run first; the export loop over ``LOG_FILES`` (below)
+    resamples, preprocesses, and writes one ``.npz`` training sample per
+    recording via :func:`save_training_sample`.
+    """
     plot_axis_correction(PARSED_DIR, 10, 3)
     sanity_check_sensors(PARSED_DIR, log_num=10)   # one of yours
     sanity_check_sensors(PARSED_DIR, log_num=2)    # teammate's

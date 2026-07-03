@@ -4,7 +4,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-from spectrograms import (
+from AutoDNA.ai.spectrograms import (
     load_sensor_data,
     estimate_sampling_rate,
     plot_spectrogram,
@@ -99,6 +99,7 @@ def save_axis_spectrogram_image(sensor_name, axis, frequencies, times, spectrogr
 
 
 def main():
+    """Load a preprocessed recording, build spectrograms, and display them per sensor."""
     #load preprocessed podatkov za pretvorbo v 2d
     sensors = load_sensor_data(DATA_FILE)
 

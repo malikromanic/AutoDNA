@@ -27,8 +27,9 @@ min_save_epoch = 15
 
 
 def load_sample(filepath):
+    """Load one sample as ``(x, y)`` tensors: gyro-Y/accel-Y/accel-X specs and hill labels."""
     data = np.load(filepath)
-    
+
     gyro = data['gyro_rgb'].astype(np.float32) / 255.0
     acc = data['accel_rgb'].astype(np.float32) / 255.0
     #gyro_y_mean = data['gyro_y_mean_per_window']  # signed mean — encodes up/down
@@ -66,18 +67,26 @@ def load_sample(filepath):
 
 
 class DriveDataset(Dataset):
+    """Dataset of per-drive hill samples loaded via :func:`load_sample`."""
+
     def __init__(self, files):
+        """Store the list of ``.npz`` sample paths."""
         self.files = list(files)
 
     def __len__(self):
+        """Return the number of samples."""
         return len(self.files)
 
     def __getitem__(self, idx):
+        """Return the ``(x, y)`` tensors for sample *idx*."""
         return load_sample(self.files[idx])
 
 
 class BiLSTM(nn.Module):
+    """Bidirectional LSTM predicting per-timestep hill presence and direction (2 outputs)."""
+
     def __init__(self, input_size):
+        """Build the BiLSTM and linear head for *input_size* features per timestep."""
         super().__init__()
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers,
                             bidirectional=True, batch_first=True)
@@ -85,6 +94,7 @@ class BiLSTM(nn.Module):
         self.fc = nn.Linear(hidden_size * 2, num_outputs)
 
     def forward(self, x):
+        """Return raw ``(batch, T, 2)`` logits (no sigmoid) for input sequence *x*."""
         out, _ = self.lstm(x)
         out = self.dropout(out)
         return self.fc(out)          # raw logits, no sigmoid
@@ -125,6 +135,10 @@ def compute_f1(pred_prob, target, threshold=0.5):
 
 
 def train(model, train_files, val_files):
+    """Train the hill BiLSTM with early stopping on validation F1; returns the best F1.
+
+    Writes the best weights to ``bilstm_best_hills.pth``.
+    """
     start_time = time.time()
     print("Training...")
     train_set = DriveDataset(train_files)
@@ -264,9 +278,10 @@ def evaluate(model, val_files):
 
 
 def main():
+    """Train and evaluate the hill BiLSTM across several random seeds and report average F1."""
     sample_files = sorted(Path('../input_data_flipped').glob('*_training.npz'))
-    
-    mode = 2 
+
+    mode = 2
     
     if mode == 1:
         f1s = []

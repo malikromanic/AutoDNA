@@ -18,12 +18,14 @@ RECORDS_FILE = get_data_dir() / "autodna_records.json"
 
 
 def load_records() -> dict:
+    """Load the flat fuel-record store from disk, returning ``{}`` if missing."""
     if RECORDS_FILE.exists():
         return json.loads(RECORDS_FILE.read_text())
     return {}
 
 
 def save_records(records: dict):
+    """Persist the record store to disk as JSON."""
     RECORDS_FILE.write_text(json.dumps(records, indent=2))
 
 

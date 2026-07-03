@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Test Suite (tests/) &#8212; AutoDNA 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="_static/alabaster.css?v=27fed22d" />
+    <script src="_static/documentation_options.js?v=f2a433a1"></script>
+    <script src="_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="prev" title="STM32 Data Logger (stm32/)" href="stm32.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="test-suite-tests">
+<h1>Test Suite (<code class="docutils literal notranslate"><span class="pre">tests/</span></code>)<a class="headerlink" href="#test-suite-tests" title="Link to this heading">¶</a></h1>
+<p>Unit tests are <strong>network-free</strong> and self-contained; the integration tests use
+the committed real recordings and <strong>auto-skip</strong> when those files aren’t present
+(e.g. on a fresh CI checkout). Run everything with:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">pytest</span>
+</pre></div>
+</div>
+<p>CI (<code class="docutils literal notranslate"><span class="pre">.github/workflows/ci.yml</span></code>) runs the same suite with coverage on every push.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Test modules are not rendered with <code class="docutils literal notranslate"><span class="pre">automodule</span></code> — they rely on the path
+setup in <code class="docutils literal notranslate"><span class="pre">tests/conftest.py</span></code> and on pytest fixtures, so importing them
+outside a pytest run isn’t meaningful. This page describes what each file
+covers instead.</p>
+</div>
+<section id="test-stm32-py-binary-parser">
+<h2><code class="docutils literal notranslate"><span class="pre">test_stm32.py</span></code> — binary parser<a class="headerlink" href="#test-stm32-py-binary-parser" title="Link to this heading">¶</a></h2>
+<p>The STM32 <code class="docutils literal notranslate"><span class="pre">.BIN</span></code> decoder: CRC16 (incremental vs. bulk), byte un-stuffing and
+its error path, <code class="docutils literal notranslate"><span class="pre">parse_packet</span></code> (rejects a bad CRC, decodes single and
+multi-sensor packets), reading a whole synthetic <code class="docutils literal notranslate"><span class="pre">.BIN</span></code> stream, and the
+<code class="docutils literal notranslate"><span class="pre">.npz</span></code> save → load round-trip. Covers
+<a class="reference internal" href="stm32.html#module-AutoDNA.stm32.bin_parser.packet" title="AutoDNA.stm32.bin_parser.packet"><code class="xref py py-mod docutils literal notranslate"><span class="pre">AutoDNA.stm32.bin_parser.packet</span></code></a> and
+<a class="reference internal" href="stm32.html#module-AutoDNA.stm32.bin_parser.stm_utils" title="AutoDNA.stm32.bin_parser.stm_utils"><code class="xref py py-mod docutils literal notranslate"><span class="pre">AutoDNA.stm32.bin_parser.stm_utils</span></code></a>.</p>
+</section>
+<section id="test-ai-py-preprocessing-features-labels">
+<h2><code class="docutils literal notranslate"><span class="pre">test_ai.py</span></code> — preprocessing, features, labels<a class="headerlink" href="#test-ai-py-preprocessing-features-labels" title="Link to this heading">¶</a></h2>
+<p>The IMU/ML chain (used elsewhere, not the live app):</p>
+<ul class="simple">
+<li><p><strong>preprocessing</strong> — <code class="docutils literal notranslate"><span class="pre">smooth_signal</span></code>; <code class="docutils literal notranslate"><span class="pre">lowpass_filter</span></code> (rejects bad params,
+attenuates 20 Hz, preserves DC); <code class="docutils literal notranslate"><span class="pre">resample_sensors_to_common_grid</span></code> (one
+shared 50 Hz grid, ms→s detection); the <em>axes are not individually
+normalised</em> invariant (a past-regression guard).</p></li>
+<li><p><strong>features</strong> — <code class="docutils literal notranslate"><span class="pre">extract_features</span></code> output shape/dtype, known values on a
+constant window, and NaN-safety on zero-variance windows.</p></li>
+<li><p><strong>labels</strong> — <code class="docutils literal notranslate"><span class="pre">_label_window</span></code> overlap threshold (≥30 %), highest-overlap
+wins, turn/hill independence.</p></li>
+<li><p><strong>real data</strong> — feature vectors stay finite over a whole recording, and turn
+windows really do carry more gyro-Z variance than straights.</p></li>
+</ul>
+<p>Covers <a class="reference internal" href="ai.html#module-AutoDNA.ai.preprocessing" title="AutoDNA.ai.preprocessing"><code class="xref py py-mod docutils literal notranslate"><span class="pre">AutoDNA.ai.preprocessing</span></code></a>, <a class="reference internal" href="ai.html#module-AutoDNA.ai.features" title="AutoDNA.ai.features"><code class="xref py py-mod docutils literal notranslate"><span class="pre">AutoDNA.ai.features</span></code></a>, and
+<code class="docutils literal notranslate"><span class="pre">_label_window</span></code> from <a class="reference internal" href="modules.html#module-AutoDNA.app.ai_pipeline" title="AutoDNA.app.ai_pipeline"><code class="xref py py-mod docutils literal notranslate"><span class="pre">AutoDNA.app.ai_pipeline</span></code></a>.</p>
+</section>
+<section id="test-gps-py-the-live-gps-pipeline">
+<h2><code class="docutils literal notranslate"><span class="pre">test_gps.py</span></code> — the live GPS pipeline<a class="headerlink" href="#test-gps-py-the-live-gps-pipeline" title="Link to this heading">¶</a></h2>
+<p>Everything the app runs today:</p>
+<ul class="simple">
+<li><p><strong>turns / hills / distance</strong> (<a class="reference internal" href="modules.html#module-AutoDNA.app.gps_analysis" title="AutoDNA.app.gps_analysis"><code class="xref py py-mod docutils literal notranslate"><span class="pre">AutoDNA.app.gps_analysis</span></code></a>) — cumulative
+distance, turn detection (straight / left / right / one continuous segment),
+DEM-grade hill detection (up / down / flat, NaN-safe), elevation gain/loss.</p></li>
+<li><p><strong>elevation</strong> (<a class="reference internal" href="modules.html#module-AutoDNA.app.elevation" title="AutoDNA.app.elevation"><code class="xref py py-mod docutils literal notranslate"><span class="pre">AutoDNA.app.elevation</span></code></a>) — the on-disk cache round-trip
+and provider selection.</p></li>
+<li><p><strong>loader helpers</strong> (<a class="reference internal" href="modules.html#module-AutoDNA.app.data_loader" title="AutoDNA.app.data_loader"><code class="xref py py-mod docutils literal notranslate"><span class="pre">AutoDNA.app.data_loader</span></code></a>) — heading bearing, speed
+interpolation, fuel extraction (PID + fallback), per-point fuel rate.</p></li>
+<li><p><strong>path resolution</strong> (<code class="xref py py-mod docutils literal notranslate"><span class="pre">AutoDNA.app.paths</span></code>) — re-rooting a teammate’s
+absolute drive path onto the local repo (the “click a stored drive” fix).</p></li>
+<li><p><strong>fuel records</strong> (<a class="reference internal" href="modules.html#module-AutoDNA.app.segment_records" title="AutoDNA.app.segment_records"><code class="xref py py-mod docutils literal notranslate"><span class="pre">AutoDNA.app.segment_records</span></code></a>) — bucket keys, first
+drive sets records with zero savings, a worse drive accrues savings and goes
+red, records are global.</p></li>
+</ul>
+</section>
+<section id="test-integration-py-real-committed-data-optional">
+<h2><code class="docutils literal notranslate"><span class="pre">test_integration.py</span></code> — real committed data (optional)<a class="headerlink" href="#test-integration-py-real-committed-data-optional" title="Link to this heading">¶</a></h2>
+<p>Parses an actual <code class="docutils literal notranslate"><span class="pre">LOG001.BIN</span></code>, checks sensors/timestamps/shape, verifies the
+parsed data matches the reference <code class="docutils literal notranslate"><span class="pre">.npz</span></code>, and validates the label-JSON schema.
+Skips automatically if the data files aren’t in the checkout.</p>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="index.html">AutoDNA</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="modules.html">App Modules</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ai.html">AI / Signal Processing (<code class="docutils literal notranslate"><span class="pre">ai/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="stm32.html">STM32 Data Logger (<code class="docutils literal notranslate"><span class="pre">stm32/</span></code>)</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Test Suite (<code class="docutils literal notranslate"><span class="pre">tests/</span></code>)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#test-stm32-py-binary-parser"><code class="docutils literal notranslate"><span class="pre">test_stm32.py</span></code> — binary parser</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#test-ai-py-preprocessing-features-labels"><code class="docutils literal notranslate"><span class="pre">test_ai.py</span></code> — preprocessing, features, labels</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#test-gps-py-the-live-gps-pipeline"><code class="docutils literal notranslate"><span class="pre">test_gps.py</span></code> — the live GPS pipeline</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#test-integration-py-real-committed-data-optional"><code class="docutils literal notranslate"><span class="pre">test_integration.py</span></code> — real committed data (optional)</a></li>
+</ul>
+</li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="stm32.html" title="previous chapter">STM32 Data Logger (<code class="docutils literal notranslate"><span class="pre">stm32/</span></code>)</a></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2026, AutoDNA Project.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.1.0</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+      |
+      <a href="_sources/tests.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

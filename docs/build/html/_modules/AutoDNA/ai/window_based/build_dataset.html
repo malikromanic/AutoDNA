@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoDNA.ai.window_based.build_dataset &#8212; AutoDNA 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../../../_static/documentation_options.js?v=f2a433a1"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+   
+  <link rel="stylesheet" href="../../../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for AutoDNA.ai.window_based.build_dataset</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Minimal Pipeline za pripravo training dataseta iz IMU .npz logov.</span>
+<span class="sd">Kanali (4): gyro_z, accel_x, accel_y, accel_z</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="c1"># ── Poti &amp; Parametri ─────────────────────────────────────────────────────────</span>
+<span class="n">BASE_DATA_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">parent</span> <span class="o">/</span> <span class="s1">&#39;data&#39;</span> <span class="o">/</span> <span class="s1">&#39;training_data&#39;</span>
+<span class="n">NPZ_DIR</span>       <span class="o">=</span> <span class="n">BASE_DATA_DIR</span> <span class="o">/</span> <span class="s1">&#39;parsed_data&#39;</span>
+<span class="n">JSON_DIR</span>      <span class="o">=</span> <span class="n">BASE_DATA_DIR</span> <span class="o">/</span> <span class="s1">&#39;labeled_data_json&#39;</span>
+<span class="n">OUTPUT_DIR</span>    <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">parent</span> <span class="o">/</span> <span class="s1">&#39;dataset_output&#39;</span>
+
+<span class="n">TARGET_FS</span>    <span class="o">=</span> <span class="mi">50</span>
+<span class="n">WINDOW_SIZE_TURN</span> <span class="o">=</span> <span class="mi">100</span>   <span class="c1"># 2s</span>
+<span class="n">STRIDE_TURN</span>      <span class="o">=</span> <span class="mi">25</span>
+<span class="n">WINDOW_SIZE_HILL</span> <span class="o">=</span> <span class="mi">200</span>   <span class="c1"># 4s</span>
+<span class="n">STRIDE_HILL</span>      <span class="o">=</span> <span class="mi">50</span>
+
+<span class="n">FLIP_LOG_NUMBERS</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">5</span><span class="p">))</span> <span class="o">+</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">15</span><span class="p">))</span> <span class="o">+</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">30</span><span class="p">,</span> <span class="mi">46</span><span class="p">)))</span>
+
+<span class="n">TURN_MAP</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;none&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s1">&#39;left&#39;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s1">&#39;right&#39;</span><span class="p">:</span> <span class="mi">2</span><span class="p">}</span>
+<span class="n">HILL_MAP</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;none&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s1">&#39;up&#39;</span><span class="p">:</span>   <span class="mi">1</span><span class="p">,</span> <span class="s1">&#39;down&#39;</span><span class="p">:</span>  <span class="mi">2</span><span class="p">}</span>
+
+<span class="n">sys</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">resolve</span><span class="p">()))</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">AutoDNA.ai.preprocessing</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_sensor_data</span><span class="p">,</span> <span class="n">resample_sensors_to_common_grid</span><span class="p">,</span> <span class="n">preprocess_sensor_data</span>  <span class="c1"># noqa: E402</span>
+
+<span class="c1"># ── Helper Funkcije ──────────────────────────────────────────────────────────</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_log_number_from_path</span><span class="p">(</span><span class="n">npz_path</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract the integer log number from a filename stem, or ``None`` if absent.&quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;(\d+)&#39;</span><span class="p">,</span> <span class="n">Path</span><span class="p">(</span><span class="n">npz_path</span><span class="p">)</span><span class="o">.</span><span class="n">stem</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span> <span class="k">if</span> <span class="n">m</span> <span class="k">else</span> <span class="kc">None</span>
+
+<div class="viewcode-block" id="tare_signal">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.window_based.build_dataset.tare_signal">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">tare_signal</span><span class="p">(</span><span class="n">signal</span><span class="p">,</span> <span class="n">fs</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">init_seconds</span><span class="o">=</span><span class="mf">2.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Odšteje začetno povprečje (mentor&#39;s trick) za odstranitev statičnega biasa.&quot;&quot;&quot;</span>
+    <span class="n">init_samples</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">fs</span> <span class="o">*</span> <span class="n">init_seconds</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">signal</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">init_samples</span><span class="p">:</span>
+        <span class="n">baseline</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">signal</span><span class="p">[:</span><span class="n">init_samples</span><span class="p">])</span>
+        <span class="k">return</span> <span class="n">signal</span> <span class="o">-</span> <span class="n">baseline</span>
+    <span class="k">return</span> <span class="n">signal</span></div>
+
+
+<div class="viewcode-block" id="get_dominant_label">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.window_based.build_dataset.get_dominant_label">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_dominant_label</span><span class="p">(</span><span class="n">t_start</span><span class="p">,</span> <span class="n">t_end</span><span class="p">,</span> <span class="n">labels</span><span class="p">,</span> <span class="n">label_key</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Poenostavljen label assignment brez kompliciranih pragov.&quot;&quot;&quot;</span>
+    <span class="n">best_label</span><span class="p">,</span> <span class="n">best_overlap</span> <span class="o">=</span> <span class="s1">&#39;none&#39;</span><span class="p">,</span> <span class="mf">0.0</span>
+    <span class="k">for</span> <span class="n">lbl</span> <span class="ow">in</span> <span class="n">labels</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">lbl</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">label_key</span><span class="p">)</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">overlap</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">t_end</span><span class="p">,</span> <span class="n">lbl</span><span class="p">[</span><span class="s1">&#39;t_end&#39;</span><span class="p">])</span> <span class="o">-</span> <span class="nb">max</span><span class="p">(</span><span class="n">t_start</span><span class="p">,</span> <span class="n">lbl</span><span class="p">[</span><span class="s1">&#39;t_start&#39;</span><span class="p">])</span>
+        <span class="k">if</span> <span class="n">overlap</span> <span class="o">&gt;</span> <span class="n">best_overlap</span><span class="p">:</span>
+            <span class="n">best_overlap</span> <span class="o">=</span> <span class="n">overlap</span>
+            <span class="n">best_label</span> <span class="o">=</span> <span class="n">lbl</span><span class="p">[</span><span class="n">label_key</span><span class="p">][</span><span class="s1">&#39;dir&#39;</span><span class="p">]</span>
+    
+    <span class="k">return</span> <span class="n">best_label</span> <span class="k">if</span> <span class="p">(</span><span class="n">best_overlap</span> <span class="o">/</span> <span class="p">(</span><span class="n">t_end</span> <span class="o">-</span> <span class="n">t_start</span><span class="p">))</span> <span class="o">&gt;=</span> <span class="mf">0.4</span> <span class="k">else</span> <span class="s1">&#39;none&#39;</span></div>
+
+
+<div class="viewcode-block" id="make_windows">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.window_based.build_dataset.make_windows">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">make_windows</span><span class="p">(</span><span class="n">signal</span><span class="p">,</span> <span class="n">t</span><span class="p">,</span> <span class="n">labels</span><span class="p">,</span> <span class="n">log_idx</span><span class="p">,</span> <span class="n">window_size</span><span class="p">,</span> <span class="n">stride</span><span class="p">,</span> <span class="n">label_key</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Slide a fixed window over *signal* and emit ``(X, Y, log_ids)`` arrays.</span>
+
+<span class="sd">    Each window is labelled by the dominant turn/hill class overlapping its time</span>
+<span class="sd">    span; *log_idx* tags every window with its source recording (for GroupKFold).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">X</span><span class="p">,</span> <span class="n">Y</span><span class="p">,</span> <span class="n">log_ids</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[],</span> <span class="p">[]</span>
+    <span class="n">label_map</span> <span class="o">=</span> <span class="n">TURN_MAP</span> <span class="k">if</span> <span class="n">label_key</span> <span class="o">==</span> <span class="s1">&#39;turn&#39;</span> <span class="k">else</span> <span class="n">HILL_MAP</span>
+    
+    <span class="n">n_windows</span> <span class="o">=</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">signal</span><span class="p">)</span> <span class="o">-</span> <span class="n">window_size</span><span class="p">)</span> <span class="o">//</span> <span class="n">stride</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_windows</span><span class="p">):</span>
+        <span class="n">i0</span><span class="p">,</span> <span class="n">i1</span> <span class="o">=</span> <span class="n">i</span> <span class="o">*</span> <span class="n">stride</span><span class="p">,</span> <span class="n">i</span> <span class="o">*</span> <span class="n">stride</span> <span class="o">+</span> <span class="n">window_size</span>
+        <span class="n">t_start</span><span class="p">,</span> <span class="n">t_end</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">t</span><span class="p">[</span><span class="n">i0</span><span class="p">]),</span> <span class="nb">float</span><span class="p">(</span><span class="n">t</span><span class="p">[</span><span class="n">i1</span> <span class="o">-</span> <span class="mi">1</span><span class="p">])</span>
+        
+        <span class="n">lbl</span> <span class="o">=</span> <span class="n">get_dominant_label</span><span class="p">(</span><span class="n">t_start</span><span class="p">,</span> <span class="n">t_end</span><span class="p">,</span> <span class="n">labels</span><span class="p">,</span> <span class="n">label_key</span><span class="p">)</span>
+        <span class="n">X</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">signal</span><span class="p">[</span><span class="n">i0</span><span class="p">:</span><span class="n">i1</span><span class="p">])</span>
+        <span class="n">Y</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">label_map</span><span class="p">[</span><span class="n">lbl</span><span class="p">])</span>
+        <span class="n">log_ids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">log_idx</span><span class="p">)</span>
+        
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">X</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">Y</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">log_ids</span><span class="p">)</span></div>
+
+
+<span class="c1"># ── Glavni Pipeline ──────────────────────────────────────────────────────────</span>
+
+<div class="viewcode-block" id="process_log">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.window_based.build_dataset.process_log">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">process_log</span><span class="p">(</span><span class="n">npz_path</span><span class="p">,</span> <span class="n">json_path</span><span class="p">,</span> <span class="n">log_idx</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Load, resample, preprocess and window one recording into turn/hill datasets.</span>
+
+<span class="sd">    :returns: ``((X_turn, Y_turn, ids_turn), (X_hill, Y_hill, ids_hill))``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">sensors</span>   <span class="o">=</span> <span class="n">load_sensor_data</span><span class="p">(</span><span class="n">npz_path</span><span class="p">)</span>
+    <span class="n">resampled</span> <span class="o">=</span> <span class="n">resample_sensors_to_common_grid</span><span class="p">(</span><span class="n">sensors</span><span class="p">,</span> <span class="n">target_fs</span><span class="o">=</span><span class="n">TARGET_FS</span><span class="p">)</span>
+    <span class="n">processed</span> <span class="o">=</span> <span class="n">preprocess_sensor_data</span><span class="p">(</span><span class="n">resampled</span><span class="p">,</span> <span class="n">fs</span><span class="o">=</span><span class="n">TARGET_FS</span><span class="p">)</span>
+
+    <span class="n">gz</span> <span class="o">=</span> <span class="n">processed</span><span class="p">[</span><span class="s1">&#39;gyro&#39;</span><span class="p">][</span><span class="s1">&#39;z&#39;</span><span class="p">]</span>
+    <span class="n">ax</span> <span class="o">=</span> <span class="n">processed</span><span class="p">[</span><span class="s1">&#39;accel&#39;</span><span class="p">][</span><span class="s1">&#39;x&#39;</span><span class="p">]</span>
+    <span class="n">ay</span> <span class="o">=</span> <span class="n">processed</span><span class="p">[</span><span class="s1">&#39;accel&#39;</span><span class="p">][</span><span class="s1">&#39;y&#39;</span><span class="p">]</span>
+    <span class="n">az</span> <span class="o">=</span> <span class="n">processed</span><span class="p">[</span><span class="s1">&#39;accel&#39;</span><span class="p">][</span><span class="s1">&#39;z&#39;</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">_log_number_from_path</span><span class="p">(</span><span class="n">npz_path</span><span class="p">)</span> <span class="ow">in</span> <span class="n">FLIP_LOG_NUMBERS</span><span class="p">:</span>
+        <span class="n">ax</span><span class="p">,</span> <span class="n">ay</span> <span class="o">=</span> <span class="o">-</span><span class="n">ax</span><span class="p">,</span> <span class="o">-</span><span class="n">ay</span>  
+
+    <span class="c1"># 2. Tare signala deluje zdaj na pravih amplitudah</span>
+    <span class="n">gz</span> <span class="o">=</span> <span class="n">tare_signal</span><span class="p">(</span><span class="n">gz</span><span class="p">)</span>
+    <span class="n">ax</span> <span class="o">=</span> <span class="n">tare_signal</span><span class="p">(</span><span class="n">ax</span><span class="p">)</span>
+    <span class="n">ay</span> <span class="o">=</span> <span class="n">tare_signal</span><span class="p">(</span><span class="n">ay</span><span class="p">)</span>
+    <span class="n">az</span> <span class="o">=</span> <span class="n">tare_signal</span><span class="p">(</span><span class="n">az</span><span class="p">)</span>
+
+    <span class="n">signal</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">column_stack</span><span class="p">([</span><span class="n">gz</span><span class="p">,</span> <span class="n">ax</span><span class="p">,</span> <span class="n">ay</span><span class="p">,</span> <span class="n">az</span><span class="p">])</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">processed</span><span class="p">[</span><span class="s1">&#39;gyro&#39;</span><span class="p">][</span><span class="s1">&#39;ts&#39;</span><span class="p">]</span>
+
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">json_path</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">labels</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)[</span><span class="s1">&#39;labels&#39;</span><span class="p">]</span>
+
+    <span class="n">X_t</span><span class="p">,</span> <span class="n">Y_t</span><span class="p">,</span> <span class="n">ids_t</span> <span class="o">=</span> <span class="n">make_windows</span><span class="p">(</span><span class="n">signal</span><span class="p">,</span> <span class="n">t</span><span class="p">,</span> <span class="n">labels</span><span class="p">,</span> <span class="n">log_idx</span><span class="p">,</span> <span class="n">WINDOW_SIZE_TURN</span><span class="p">,</span> <span class="n">STRIDE_TURN</span><span class="p">,</span> <span class="s1">&#39;turn&#39;</span><span class="p">)</span>
+    <span class="n">X_h</span><span class="p">,</span> <span class="n">Y_h</span><span class="p">,</span> <span class="n">ids_h</span> <span class="o">=</span> <span class="n">make_windows</span><span class="p">(</span><span class="n">signal</span><span class="p">,</span> <span class="n">t</span><span class="p">,</span> <span class="n">labels</span><span class="p">,</span> <span class="n">log_idx</span><span class="p">,</span> <span class="n">WINDOW_SIZE_HILL</span><span class="p">,</span> <span class="n">STRIDE_HILL</span><span class="p">,</span> <span class="s1">&#39;hill&#39;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">(</span><span class="n">X_t</span><span class="p">,</span> <span class="n">Y_t</span><span class="p">,</span> <span class="n">ids_t</span><span class="p">),</span> <span class="p">(</span><span class="n">X_h</span><span class="p">,</span> <span class="n">Y_h</span><span class="p">,</span> <span class="n">ids_h</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="main">
+<a class="viewcode-back" href="../../../../ai.html#AutoDNA.ai.window_based.build_dataset.main">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Window every labelled recording and save the concatenated turn/hill ``.npy`` arrays.&quot;&quot;&quot;</span>
+    <span class="n">OUTPUT_DIR</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">npz_files</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">NPZ_DIR</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s1">&#39;*.npz&#39;</span><span class="p">))</span>
+
+    <span class="n">all_X_turn</span><span class="p">,</span> <span class="n">all_Y_turn</span><span class="p">,</span> <span class="n">all_ids_turn</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[],</span> <span class="p">[]</span>
+    <span class="n">all_X_hill</span><span class="p">,</span> <span class="n">all_Y_hill</span><span class="p">,</span> <span class="n">all_ids_hill</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[],</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">log_idx</span><span class="p">,</span> <span class="n">npz_path</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">npz_files</span><span class="p">):</span>
+        <span class="n">json_path</span> <span class="o">=</span> <span class="n">JSON_DIR</span> <span class="o">/</span> <span class="p">(</span><span class="n">npz_path</span><span class="o">.</span><span class="n">stem</span> <span class="o">+</span> <span class="s1">&#39;_labels.json&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">json_path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+            <span class="k">continue</span>
+
+        <span class="p">(</span><span class="n">X_t</span><span class="p">,</span> <span class="n">Y_t</span><span class="p">,</span> <span class="n">ids_t</span><span class="p">),</span> <span class="p">(</span><span class="n">X_h</span><span class="p">,</span> <span class="n">Y_h</span><span class="p">,</span> <span class="n">ids_h</span><span class="p">)</span> <span class="o">=</span> <span class="n">process_log</span><span class="p">(</span><span class="n">npz_path</span><span class="p">,</span> <span class="n">json_path</span><span class="p">,</span> <span class="n">log_idx</span><span class="p">)</span>
+
+        <span class="n">all_X_turn</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">X_t</span><span class="p">)</span>
+        <span class="n">all_Y_turn</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">Y_t</span><span class="p">)</span>
+        <span class="n">all_ids_turn</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ids_t</span><span class="p">)</span>
+        <span class="n">all_X_hill</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">X_h</span><span class="p">)</span>
+        <span class="n">all_Y_hill</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">Y_h</span><span class="p">)</span>
+        <span class="n">all_ids_hill</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ids_h</span><span class="p">)</span>
+
+    <span class="n">np</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">OUTPUT_DIR</span> <span class="o">/</span> <span class="s1">&#39;X_turn.npy&#39;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">all_X_turn</span><span class="p">))</span>
+    <span class="n">np</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">OUTPUT_DIR</span> <span class="o">/</span> <span class="s1">&#39;Y_turn.npy&#39;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">all_Y_turn</span><span class="p">))</span>
+    <span class="n">np</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">OUTPUT_DIR</span> <span class="o">/</span> <span class="s1">&#39;log_ids_turn.npy&#39;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">all_ids_turn</span><span class="p">))</span>
+    
+    <span class="n">np</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">OUTPUT_DIR</span> <span class="o">/</span> <span class="s1">&#39;X_hill.npy&#39;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">all_X_hill</span><span class="p">))</span>
+    <span class="n">np</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">OUTPUT_DIR</span> <span class="o">/</span> <span class="s1">&#39;Y_hill.npy&#39;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">all_Y_hill</span><span class="p">))</span>
+    <span class="n">np</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">OUTPUT_DIR</span> <span class="o">/</span> <span class="s1">&#39;log_ids_hill.npy&#39;</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">all_ids_hill</span><span class="p">))</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Končano. Shranjeno v </span><span class="si">{</span><span class="n">OUTPUT_DIR</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../../index.html">AutoDNA</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../../modules.html">App Modules</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../ai.html">AI / Signal Processing (<code class="docutils literal notranslate"><span class="pre">ai/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../stm32.html">STM32 Data Logger (<code class="docutils literal notranslate"><span class="pre">stm32/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../tests.html">Test Suite (<code class="docutils literal notranslate"><span class="pre">tests/</span></code>)</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2026, AutoDNA Project.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.1.0</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

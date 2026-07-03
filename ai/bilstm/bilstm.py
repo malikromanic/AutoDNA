@@ -68,6 +68,7 @@ def flatten_sensors(accel, gyro, mag):
     mag_flat   = mag.reshape(F*3, T).T
 
     def minmax(arr):
+        """Min-max scale *arr* to [0, 1] (identity if the array is constant)."""
         mn, mx = arr.min(), arr.max()
         if mx > mn:
             return (arr - mn) / (mx - mn)
@@ -233,13 +234,23 @@ def compute_pos_weights(dataset, max_weight=3.0):
 
 
 def masked_loss(pred, target, pw):
+    """Multi-task loss computed over labelled timesteps only.
+
+    Sums pos-weighted BCE for turn/hill/straight presence and direction plus an
+    L1 term on the two normalised angle outputs. Timesteps whose target row is
+    all-zero (unlabelled) are masked out. *pw* maps head names to pos-weights.
+    """
     def bce_turn(p, t):
+        """Pos-weighted BCE for the turn-presence head."""
         return nn.BCEWithLogitsLoss(pos_weight=pw['turn'])(p, t)
     def bce_hill(p, t):
+        """Pos-weighted BCE for the hill-presence head."""
         return nn.BCEWithLogitsLoss(pos_weight=pw['hill'])(p, t)
     def bce_straight(p, t):
+        """Pos-weighted BCE for the straight head."""
         return nn.BCEWithLogitsLoss(pos_weight=pw['straight'])(p, t)
     def bce_dir(p, t):
+        """Pos-weighted BCE for a direction head (turn/hill left-right / up-down)."""
         return nn.BCEWithLogitsLoss(pos_weight=pw['turn_dir'])(p, t)
 
     # L1 instead of MSE for angle regression — more robust to outliers
@@ -277,6 +288,10 @@ def masked_loss(pred, target, pw):
 
 
 def train_model(model, train_set, val_set, print_info):
+    """Train the BiLSTM with early stopping on validation F1, saving the best weights.
+
+    Returns ``(train_losses, val_losses, accuracies)`` and writes ``bilstm_best.pth``.
+    """
     if print_info:
         print("Training...\n")
         
@@ -376,6 +391,7 @@ def train_model(model, train_set, val_set, print_info):
 
 
 def measure_epoch_acc(all_preds, all_targets):
+    """Return the mean F1 (%) over the turn/hill/straight presence columns for one epoch."""
     all_preds   = torch.cat(all_preds,   dim=0)
     all_targets = torch.cat(all_targets, dim=0)
 
@@ -515,6 +531,7 @@ def evaluate_model(model, validation_files):
  
     
 def train_once(sample_files, val_ratio=0.2, seed=42):
+    """Train and evaluate one BiLSTM on a single stratified split for the given *seed*."""
     if seed is not None:
         random.seed(seed)
 
@@ -524,7 +541,7 @@ def train_once(sample_files, val_ratio=0.2, seed=42):
     val_count = max(1, int(len(files) * val_ratio))
     val_files = files[:val_count]
     train_files = files[val_count:]"""
-    
+
     train_files, val_files = stratified_split(files, val_ratio, seed)
     
     accel, gyro, mag, _ = load_training_sample(sample_files[0])
@@ -551,9 +568,10 @@ def train_once(sample_files, val_ratio=0.2, seed=42):
     
     
 def load_and_test(sample_files, val_ratio=0.2, seed=42):
+    """Load ``bilstm.pth`` and evaluate it on the validation split for the given *seed*."""
     files = sample_files.copy()
     train_files, val_files = stratified_split(files, val_ratio, seed)  # match train_once
-    
+
     accel, gyro, mag, _ = load_training_sample(sample_files[0])
     F = accel.shape[0]
     input_size = F * 3 * 3

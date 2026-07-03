@@ -1,0 +1,18 @@
+[
+  {
+    "drive_name": "center-salek",
+    "drive_path": "C:\\Users\\marom\\Downloads\\tmp",
+    "features": {
+      "harsh_accel_rate": 5.508991545654841,
+      "harsh_braking_rate": 5.141725442611185,
+      "rms_jerk": 183.30173920079434,
+      "avg_speed_kmh": 28.074661254882812,
+      "speed_variability": 12.123502731323242,
+      "idle_time_pct": 2.735562310030395,
+      "distance_km": 2.722821386761991,
+      "_duration_min": 6.500855818333366
+    },
+    "fuel_l100km": 8.761149718853355,
+    "timestamp": "2026-07-03T11:31:02"
+  }
+]

@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoDNA.ai.demo_preprocessing &#8212; AutoDNA 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../../_static/documentation_options.js?v=f2a433a1"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for AutoDNA.ai.demo_preprocessing</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Demo script for preprocessing telemetry sensor signals.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">AutoDNA.ai.preprocessing</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">load_sensor_data</span><span class="p">,</span>
+    <span class="n">estimate_sampling_rate</span><span class="p">,</span>
+    <span class="n">preprocess_sensor_data</span><span class="p">,</span>
+    <span class="n">normalize_signal</span><span class="p">,</span>
+    <span class="n">save_preprocessed_data</span><span class="p">,</span>
+    <span class="n">resample_sensors_to_common_grid</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<span class="n">WINDOW_SIZE</span> <span class="o">=</span> <span class="mi">5</span>
+<span class="n">CUTOFF</span> <span class="o">=</span> <span class="mf">5.0</span>
+<span class="n">FILTER_ORDER</span> <span class="o">=</span> <span class="mi">4</span>
+
+<span class="c1">#DATA_FILE = (Path(__file__).parent / &quot;../data/training_data/parsed_data/LOG010.npz&quot;).resolve()</span>
+
+<span class="n">DATA_FILE</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">with_name</span><span class="p">(</span><span class="s2">&quot;LOG010.npz&quot;</span><span class="p">)</span>
+<span class="n">OUTPUT_FILE</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">with_name</span><span class="p">(</span><span class="s2">&quot;LOG010_preprocessed.npz&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_to_seconds</span><span class="p">(</span><span class="n">ts</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert timestamps to seconds when they are likely milliseconds.&quot;&quot;&quot;</span>
+    <span class="n">ts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+    <span class="n">ts</span> <span class="o">=</span> <span class="n">ts</span> <span class="o">-</span> <span class="n">ts</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">diffs</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="n">ts</span><span class="p">)</span>
+    <span class="n">diffs</span> <span class="o">=</span> <span class="n">diffs</span><span class="p">[</span><span class="n">diffs</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">diffs</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">np</span><span class="o">.</span><span class="n">median</span><span class="p">(</span><span class="n">diffs</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">10</span><span class="p">:</span>
+        <span class="c1">#pretvorba v sekunde za pravilne osi grafa</span>
+        <span class="n">ts</span> <span class="o">=</span> <span class="n">ts</span> <span class="o">/</span> <span class="mf">1000.0</span>
+
+    <span class="k">return</span> <span class="n">ts</span>
+
+
+<div class="viewcode-block" id="plot_sensor_all_axes">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.demo_preprocessing.plot_sensor_all_axes">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">plot_sensor_all_axes</span><span class="p">(</span><span class="n">sensor_name</span><span class="p">,</span> <span class="n">raw_sensor</span><span class="p">,</span> <span class="n">processed_sensor</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Show raw vs processed signals for x/y/z axes of one sensor.&quot;&quot;&quot;</span>
+    <span class="n">ts</span> <span class="o">=</span> <span class="n">_to_seconds</span><span class="p">(</span><span class="n">raw_sensor</span><span class="p">[</span><span class="s2">&quot;ts&quot;</span><span class="p">])</span>
+
+    <span class="c1">#demonstracija preprocessinga na vseh 3 oseh</span>
+    <span class="n">fig</span><span class="p">,</span> <span class="n">axes</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span> <span class="n">sharex</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">fig</span><span class="o">.</span><span class="n">suptitle</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">sensor_name</span><span class="si">}</span><span class="s2">: raw vs processed&quot;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">14</span><span class="p">)</span>
+
+    <span class="c1">#primerjava raw vs processed za x/y/z kanale</span>
+    <span class="k">for</span> <span class="n">axis_plot</span><span class="p">,</span> <span class="n">axis_name</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">axes</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;x&quot;</span><span class="p">,</span> <span class="s2">&quot;y&quot;</span><span class="p">,</span> <span class="s2">&quot;z&quot;</span><span class="p">]):</span>
+        <span class="n">raw_axis</span> <span class="o">=</span> <span class="n">normalize_signal</span><span class="p">(</span><span class="n">raw_sensor</span><span class="p">[</span><span class="n">axis_name</span><span class="p">])</span>
+        <span class="n">processed_axis</span> <span class="o">=</span> <span class="n">processed_sensor</span><span class="p">[</span><span class="n">axis_name</span><span class="p">]</span>
+
+        <span class="n">axis_plot</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">raw_axis</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Raw&quot;</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
+        <span class="n">axis_plot</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">processed_axis</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Processed&quot;</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+        <span class="n">axis_plot</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="n">axis_name</span><span class="o">.</span><span class="n">upper</span><span class="p">())</span>
+        <span class="n">axis_plot</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">axis_plot</span><span class="o">.</span><span class="n">legend</span><span class="p">()</span>
+
+    <span class="n">axes</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s2">&quot;Time (s)&quot;</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span></div>
+
+
+
+<div class="viewcode-block" id="main">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.demo_preprocessing.main">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Load one recording, preprocess every sensor, save it, and plot raw vs processed.&quot;&quot;&quot;</span>
+    <span class="c1">#load podatkov za enoten preprocessing pipeline</span>
+    <span class="n">sensors</span> <span class="o">=</span> <span class="n">load_sensor_data</span><span class="p">(</span><span class="n">DATA_FILE</span><span class="p">)</span>
+    
+    <span class="c1">#resampling vseh senzorjev na skupno casovno mrezo za enostavnejso obdelavo</span>
+    <span class="n">sensors</span> <span class="o">=</span> <span class="n">resample_sensors_to_common_grid</span><span class="p">(</span><span class="n">sensors</span><span class="p">)</span>
+
+    <span class="c1">#ocena frekvence vzorcenja iz timestampov</span>
+    <span class="n">first_sensor</span> <span class="o">=</span> <span class="n">sensors</span><span class="p">[</span><span class="nb">next</span><span class="p">(</span><span class="nb">iter</span><span class="p">(</span><span class="n">sensors</span><span class="p">))]</span>
+    <span class="n">fs</span> <span class="o">=</span> <span class="n">estimate_sampling_rate</span><span class="p">(</span><span class="n">first_sensor</span><span class="p">[</span><span class="s2">&quot;ts&quot;</span><span class="p">])</span>
+
+    <span class="c1">#zadrzimo cutoff pod nyquist mejo</span>
+    <span class="n">effective_cutoff</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">CUTOFF</span><span class="p">,</span> <span class="mf">0.45</span> <span class="o">*</span> <span class="n">fs</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Loaded sensors:&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">sensor_name</span><span class="p">,</span> <span class="n">sensor_data</span> <span class="ow">in</span> <span class="n">sensors</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">sensor_name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">sensor_data</span><span class="p">[</span><span class="s1">&#39;ts&#39;</span><span class="p">])</span><span class="si">}</span><span class="s2"> samples&quot;</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Estimated sampling rate: </span><span class="si">{</span><span class="n">fs</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> Hz&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Window size: </span><span class="si">{</span><span class="n">WINDOW_SIZE</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Filter order: </span><span class="si">{</span><span class="n">FILTER_ORDER</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Low-pass cutoff requested: </span><span class="si">{</span><span class="n">CUTOFF</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> Hz&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Low-pass cutoff used: </span><span class="si">{</span><span class="n">effective_cutoff</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> Hz&quot;</span><span class="p">)</span>
+
+    <span class="c1">#reusable funkcija naredi ciscenje vseh senzorjev</span>
+    <span class="n">processed</span> <span class="o">=</span> <span class="n">preprocess_sensor_data</span><span class="p">(</span>
+        <span class="n">sensors</span><span class="o">=</span><span class="n">sensors</span><span class="p">,</span>
+        <span class="n">fs</span><span class="o">=</span><span class="n">fs</span><span class="p">,</span>
+        <span class="n">cutoff</span><span class="o">=</span><span class="n">CUTOFF</span><span class="p">,</span>
+        <span class="n">window_size</span><span class="o">=</span><span class="n">WINDOW_SIZE</span><span class="p">,</span>
+        <span class="n">filter_order</span><span class="o">=</span><span class="n">FILTER_ORDER</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1">#moznost shranjevanja preprocessiranih podatkov</span>
+    <span class="n">save_preprocessed_data</span><span class="p">(</span><span class="n">processed</span><span class="p">,</span> <span class="n">OUTPUT_FILE</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Saved processed data: </span><span class="si">{</span><span class="n">OUTPUT_FILE</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1">#vizualna potrditev ucinka preprocessinga za zagovor</span>
+    <span class="k">for</span> <span class="n">sensor_name</span> <span class="ow">in</span> <span class="n">sensors</span><span class="p">:</span>
+        <span class="n">plot_sensor_all_axes</span><span class="p">(</span>
+            <span class="n">sensor_name</span><span class="o">=</span><span class="n">sensor_name</span><span class="p">,</span>
+            <span class="n">raw_sensor</span><span class="o">=</span><span class="n">sensors</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">],</span>
+            <span class="n">processed_sensor</span><span class="o">=</span><span class="n">processed</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">],</span>
+        <span class="p">)</span></div>
+
+
+    <span class="c1">#todo dodat avtomatsko metriko izboljsanja noise nivoja</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../index.html">AutoDNA</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules.html">App Modules</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../ai.html">AI / Signal Processing (<code class="docutils literal notranslate"><span class="pre">ai/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../stm32.html">STM32 Data Logger (<code class="docutils literal notranslate"><span class="pre">stm32/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tests.html">Test Suite (<code class="docutils literal notranslate"><span class="pre">tests/</span></code>)</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2026, AutoDNA Project.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.1.0</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

@@ -45,10 +45,12 @@ stm_port   = None
 # ═══════════════════════════════════════════════════════════════════════════
 
 def is_connected():
+    """Return ``True`` if an STM32 serial port is currently open."""
     return stm_serial is not None and stm_serial.is_open
 
 
 def find_stm32():
+    """Scan the serial ports and return the device path of the STM32, or ``None``."""
     for port in serial.tools.list_ports.comports():
         if f"{STM_VID:04X}:{STM_PID:04X}" in port.hwid.upper():
             return port.device
@@ -79,12 +81,14 @@ def send_and_read(command):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def cmd_status():
+    """``STATUS`` command: report whether the STM32 is connected and on which port."""
     if is_connected():
         return f"STM32 is connected at {stm_port}"
     return "STM32 is not connected"
 
 
 def cmd_get_file(filename):
+    """``GET_FILE`` command: fetch *filename* from the STM32 and save it to disk."""
     if not is_connected():
         return "FAIL: STM32 is not connected"
 
@@ -98,6 +102,7 @@ def cmd_get_file(filename):
 
 
 def cmd_get_last():
+    """``GET_LAST`` command: fetch the most recent ``.BIN`` file on the STM32."""
     if not is_connected():
         return "FAIL: STM32 is not connected"
 
@@ -114,6 +119,7 @@ def cmd_get_last():
 
 
 def cmd_get_all():
+    """``GET_ALL`` command: fetch every ``.BIN`` file currently on the STM32."""
     if not is_connected():
         return "FAIL: STM32 is not connected"
 
@@ -131,6 +137,7 @@ def cmd_get_all():
 
 
 def cmd_delete():
+    """``DELETE`` command: erase all recordings stored on the STM32."""
     if not is_connected():
         return "FAIL: STM32 is not connected"
 
@@ -138,6 +145,7 @@ def cmd_delete():
     return "All files on STM32 are deleted"
 
 def cmd_list():
+    """``LIST`` command: return the raw directory listing reported by the STM32."""
     if not is_connected():
         return "FAIL: STM32 is not connected"
 
@@ -153,6 +161,7 @@ def cmd_list():
 
 
 def handle_command(cmd):
+    """Dispatch one client command string to the matching ``cmd_*`` handler."""
     cmd = cmd.strip()
     upper = cmd.upper()
 
@@ -178,6 +187,7 @@ def handle_command(cmd):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def watch_for_stm32():
+    """Background thread: poll for STM32 hot-plug/unplug and keep the port state current."""
     global stm_serial, stm_port
     while True:
         time.sleep(2)
@@ -214,6 +224,7 @@ def watch_for_stm32():
 # ═══════════════════════════════════════════════════════════════════════════
 
 def main():
+    """Start the hot-plug watcher and serve TCP clients on ``HOST:PORT`` until interrupted."""
     global stm_serial, stm_port
 
     log.info("STM32 service se zaganja...")

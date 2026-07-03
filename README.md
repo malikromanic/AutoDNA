@@ -2,7 +2,7 @@
 
 AI-powered driving style analysis and its impact on vehicle health.
 
-For full project description see [`docs/AutoDNA.md`](docs/AutoDNA.md).
+API reference docs (Sphinx) live in [`docs/`](docs/) — see the "Documentation" section below to build the HTML site or a single PDF.
 
 ---
 
@@ -21,6 +21,30 @@ AutoDNA/
 ├── docs/              # Project documentation
 └── README.md
 ```
+
+---
+
+## Documentation
+
+API reference docs are generated with [Sphinx](https://www.sphinx-doc.org/) from
+the docstrings in `app/`, `ai/`, and `stm32/`. The source lives in `docs/source/`.
+
+```bash
+pip install sphinx        # one-time
+cd docs
+
+# Windows
+.\make.bat html           # HTML  -> docs/build/html/index.html
+.\make.bat latexpdf       # PDF   -> docs/build/latex/AutoDNA.pdf
+
+# macOS / Linux
+make html
+make latexpdf
+```
+
+- `latexpdf` also needs a LaTeX distribution (e.g. MiKTeX on Windows, TeX Live elsewhere).
+- Build from the environment where **PyQt6** is installed (the one used to run the
+  app), otherwise the `app/` pages fail to import while `ai`/`stm32`/`tests` still build.
 
 ---
 

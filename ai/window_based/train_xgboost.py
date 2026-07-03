@@ -29,6 +29,7 @@ def extract_basic_features(window):
     return np.array(feats, dtype=np.float32)
 
 def train_xgb_task(X, Y, log_ids, task_name):
+    """Train XGBoost on hand-crafted window features for one task with 5-fold GroupKFold CV."""
     print("\n==================================================")
     print(f"Treniram XGBoost (5-Fold CV + SMOOTH POPRAVKI): {task_name.upper()}")
     print("==================================================")
@@ -62,6 +63,7 @@ def train_xgb_task(X, Y, log_ids, task_name):
     print(classification_report(Y, oof_predictions, target_names=target_names, zero_division=0))
 
 def main():
+    """Train and evaluate the XGBoost classifier on both the turn and hill datasets."""
     X_turn = np.load(DATASET_DIR / 'X_turn.npy')
     Y_turn = np.load(DATASET_DIR / 'Y_turn.npy')
     ids_turn = np.load(DATASET_DIR / 'log_ids_turn.npy')

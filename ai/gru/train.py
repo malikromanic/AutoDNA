@@ -1,3 +1,10 @@
+"""GRU sequence classifier experiment (per-drive maneuver classification).
+
+Loads RGB-spectrogram ``.npz`` samples, flattens all three sensors into one
+time series per drive, and trains a GRU to predict a single class label for the
+whole sequence. Standalone research script — not used by the live app.
+"""
+
 from pathlib import Path
 import numpy as np
 import torch
@@ -15,6 +22,7 @@ NUM_EPOCHS = 10
 
 
 def load_sample(filepath):
+    """Load one ``.npz`` sample, returning ``(accel, gyro, mag, labels)`` arrays."""
     #nalozi en npz samplee
     data = np.load(filepath)
 
@@ -27,8 +35,10 @@ def load_sample(filepath):
 
 
 def prepare(accel, gyro, mag, y):
+    """Flatten the three sensors into one ``(T, F*9)`` matrix and derive a single class label."""
     #flatten senzorje v casovno vrsto
     def flatten(x):
+        """Flatten a ``(F, T, C)`` spectrogram to ``(T, F*C)``."""
         f, t, c = x.shape
         return x.reshape(f * c, t).T
 
@@ -55,6 +65,7 @@ def prepare(accel, gyro, mag, y):
 
 
 def load_data(folder):
+    """Load and prepare every ``.npz`` sample in *folder* into feature/label lists."""
     #nalozi vse sample iz dataset mape
     x_list = []
     y_list = []
@@ -72,6 +83,7 @@ def load_data(folder):
 
 
 def pad(x_list):
+    """Zero-pad variable-length sequences to a single ``(N, max_len, dim)`` array."""
     #padding sekvenc na isto dolzino za batch processing
     max_len = max(len(x) for x in x_list)
     dim = x_list[0].shape[1]
@@ -85,6 +97,7 @@ def pad(x_list):
 
 
 def train_val_split(x, y):
+    """Shuffle and split *x*/*y* into an 80/20 train/validation partition."""
     #random shuffle in split za train in validation set
     idx = np.arange(len(x))
     np.random.shuffle(idx)
@@ -98,7 +111,10 @@ def train_val_split(x, y):
 
 
 class GRUModel(nn.Module):
+    """GRU that maps a variable-length sensor sequence to one class prediction."""
+
     def __init__(self, input_size):
+        """Build the GRU and final linear head for *input_size* features per timestep."""
         super().__init__()
 
         #gru arhitektura za casovne sekvence
@@ -112,6 +128,7 @@ class GRUModel(nn.Module):
         self.fc = nn.Linear(HIDDEN_SIZE, NUM_CLASSES)
 
     def forward(self, x):
+        """Run the GRU over *x* and classify using the last timestep's hidden state."""
         #inicijalizacija hidden stanja
         #pomembno: mora biti na istem device kot input
         device = x.device
@@ -126,6 +143,7 @@ class GRUModel(nn.Module):
 
 
 def train(model, x_train, y_train, x_val, y_val):
+    """Train *model* with Adam + cross-entropy, returning per-epoch train/val loss lists."""
     #loss funkcija in optimizer
     loss_fn = nn.CrossEntropyLoss()
     opt = optim.Adam(model.parameters(), lr=LEARNING_RATE)
@@ -176,6 +194,7 @@ def train(model, x_train, y_train, x_val, y_val):
 
 
 def plot(train, val):
+    """Plot train vs. validation loss curves."""
     #primerjava train vs validation loss
     plt.plot(train)
     plt.plot(val)
@@ -184,6 +203,7 @@ def plot(train, val):
 
 
 def main():
+    """Load the dataset, train the GRU, and plot its loss curves."""
     #reproducibilnost rezultatov
     np.random.seed(42)
     torch.manual_seed(42)

@@ -1,11 +1,19 @@
+"""Command-line tool to decode STM32 ``.BIN`` recordings into ``.npz``.
+
+Handles a single ``.bin`` file or a whole folder of them. Run with::
+
+    python -m AutoDNA.stm32.bin_parser.parser <input.bin | input_dir> [-o out] [--preview]
+"""
+
 import argparse
 import os
 import glob
-from stm_utils import read_packets_from_file, save_to_npz
+from AutoDNA.stm32.bin_parser.stm_utils import read_packets_from_file, save_to_npz
 from AutoDNA.stm32.bin_parser.packet import Packet
 
 
 def print_summary(packets: list[Packet]) -> None:
+    """Print a summary of parsed packets: total count, time span, samples per sensor."""
     print("\n--- Povzetek ---")
     print(f"Skupaj paketov: {len(packets)}")
 
@@ -28,6 +36,7 @@ def print_summary(packets: list[Packet]) -> None:
 
 
 def print_packets(packets: list[Packet], limit: int = 5) -> None:
+    """Print the first ``limit`` packets with their raw XYZ samples (debug preview)."""
     print(f"\n--- Prvih {min(limit, len(packets))} paketov ---")
     for p in packets[:limit]:
         print(p)
@@ -36,6 +45,10 @@ def print_packets(packets: list[Packet], limit: int = 5) -> None:
 
 
 def process_file(input_path: str, output_path: str, preview: bool = False) -> bool:
+    """Parse one ``.BIN`` file and save it as ``.npz``.
+
+    :returns: ``True`` on success, ``False`` if no packets could be parsed.
+    """
     print(f"\n=== {input_path} ===")
     packets = read_packets_from_file(input_path)
 
@@ -53,6 +66,7 @@ def process_file(input_path: str, output_path: str, preview: bool = False) -> bo
 
 
 def main():
+    """CLI entry point: parse a ``.bin`` file or a folder of them into ``.npz``."""
     parser = argparse.ArgumentParser(
         description='STM32 data logger — dekodiranje in shranjevanje binarnih podatkov'
     )

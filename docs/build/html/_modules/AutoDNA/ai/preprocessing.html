@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoDNA.ai.preprocessing &#8212; AutoDNA 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../../_static/documentation_options.js?v=f2a433a1"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for AutoDNA.ai.preprocessing</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Reusable preprocessing functions for sensor data stored in .npz files.&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy.signal</span><span class="w"> </span><span class="kn">import</span> <span class="n">butter</span><span class="p">,</span> <span class="n">filtfilt</span>
+
+
+<div class="viewcode-block" id="load_sensor_data">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.preprocessing.load_sensor_data">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_sensor_data</span><span class="p">(</span><span class="n">filepath</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Load .npz sensor data into a common dictionary format.&quot;&quot;&quot;</span>
+    <span class="n">sensors</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">with</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">filepath</span><span class="p">,</span> <span class="n">allow_pickle</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="k">as</span> <span class="n">raw</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">sensor_name</span> <span class="ow">in</span> <span class="n">raw</span><span class="o">.</span><span class="n">files</span><span class="p">:</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">]</span>
+            
+            <span class="c1"># divide accel x/y/z by 16 to correct left-shift alignment</span>
+            <span class="k">if</span> <span class="n">sensor_name</span> <span class="o">==</span> <span class="s2">&quot;accel&quot;</span><span class="p">:</span>
+                <span class="n">data</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+                <span class="n">data</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span> <span class="o">=</span> <span class="n">data</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:]</span> <span class="o">/</span> <span class="mf">16.0</span>
+                
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="ow">and</span> <span class="n">data</span><span class="o">.</span><span class="n">dtype</span> <span class="o">==</span> <span class="nb">object</span><span class="p">:</span>
+                <span class="n">data</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="k">if</span> <span class="n">data</span><span class="o">.</span><span class="n">shape</span> <span class="o">==</span> <span class="p">()</span> <span class="k">else</span> <span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+                <span class="n">ts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;ts&quot;</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+                <span class="n">x</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;x&quot;</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+                <span class="n">y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;y&quot;</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+                <span class="n">z</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;z&quot;</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">data</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">2</span> <span class="ow">or</span> <span class="n">data</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">&lt;</span> <span class="mi">4</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">sensor_name</span><span class="si">}</span><span class="s2"> must have columns: timestamp, x, y, z&quot;</span>
+                    <span class="p">)</span>
+                    
+                <span class="n">order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">data</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">])</span>
+                <span class="n">data</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="n">order</span><span class="p">]</span>
+                <span class="n">ts</span> <span class="o">=</span> <span class="n">data</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span>
+                <span class="n">x</span> <span class="o">=</span> <span class="n">data</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]</span>
+                <span class="n">y</span> <span class="o">=</span> <span class="n">data</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">]</span>
+                <span class="n">z</span> <span class="o">=</span> <span class="n">data</span><span class="p">[:,</span> <span class="mi">3</span><span class="p">]</span>
+
+            <span class="n">sensors</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s2">&quot;ts&quot;</span><span class="p">:</span> <span class="n">ts</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span>
+                <span class="s2">&quot;x&quot;</span><span class="p">:</span> <span class="n">x</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span>
+                <span class="s2">&quot;y&quot;</span><span class="p">:</span> <span class="n">y</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span>
+                <span class="s2">&quot;z&quot;</span><span class="p">:</span> <span class="n">z</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span>
+            <span class="p">}</span>
+
+    <span class="k">return</span> <span class="n">sensors</span></div>
+
+
+
+<div class="viewcode-block" id="smooth_signal">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.preprocessing.smooth_signal">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">smooth_signal</span><span class="p">(</span><span class="n">signal</span><span class="p">,</span> <span class="n">window_size</span><span class="o">=</span><span class="mi">5</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Smooth signal with a moving average.&quot;&quot;&quot;</span>
+    <span class="n">signal</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">signal</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">window_size</span> <span class="o">&lt;=</span> <span class="mi">1</span> <span class="ow">or</span> <span class="nb">len</span><span class="p">(</span><span class="n">signal</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">signal</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+
+    <span class="n">window_size</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">window_size</span><span class="p">)</span>
+    <span class="n">kernel</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">window_size</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span> <span class="o">/</span> <span class="n">window_size</span>
+
+    <span class="n">left_pad</span> <span class="o">=</span> <span class="n">window_size</span> <span class="o">//</span> <span class="mi">2</span>
+    <span class="n">right_pad</span> <span class="o">=</span> <span class="n">window_size</span> <span class="o">-</span> <span class="mi">1</span> <span class="o">-</span> <span class="n">left_pad</span>
+    <span class="n">padded</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">pad</span><span class="p">(</span><span class="n">signal</span><span class="p">,</span> <span class="p">(</span><span class="n">left_pad</span><span class="p">,</span> <span class="n">right_pad</span><span class="p">),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;edge&quot;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">convolve</span><span class="p">(</span><span class="n">padded</span><span class="p">,</span> <span class="n">kernel</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;valid&quot;</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="lowpass_filter">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.preprocessing.lowpass_filter">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">lowpass_filter</span><span class="p">(</span><span class="n">signal</span><span class="p">,</span> <span class="n">fs</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="mi">4</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apply a Butterworth low-pass filter.&quot;&quot;&quot;</span>
+    <span class="n">signal</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">signal</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">fs</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;fs must be positive&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">cutoff</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;cutoff must be positive&quot;</span><span class="p">)</span>
+
+    <span class="n">nyquist</span> <span class="o">=</span> <span class="n">fs</span> <span class="o">/</span> <span class="mf">2.0</span>
+    <span class="k">if</span> <span class="n">cutoff</span> <span class="o">&gt;=</span> <span class="n">nyquist</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;cutoff must be lower than fs / 2&quot;</span><span class="p">)</span>
+
+    <span class="n">min_len</span> <span class="o">=</span> <span class="mi">3</span> <span class="o">*</span> <span class="p">(</span><span class="n">order</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">signal</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="n">min_len</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">signal</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+
+    <span class="n">b</span><span class="p">,</span> <span class="n">a</span> <span class="o">=</span> <span class="n">butter</span><span class="p">(</span><span class="n">order</span><span class="p">,</span> <span class="n">cutoff</span> <span class="o">/</span> <span class="n">nyquist</span><span class="p">,</span> <span class="n">btype</span><span class="o">=</span><span class="s2">&quot;low&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">filtfilt</span><span class="p">(</span><span class="n">b</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">signal</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="normalize_signal">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.preprocessing.normalize_signal">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">normalize_signal</span><span class="p">(</span><span class="n">signal</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Normalize signal to range [-1, 1].&quot;&quot;&quot;</span>
+    <span class="n">signal</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">signal</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+
+    <span class="n">max_value</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">signal</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">max_value</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">signal</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="n">signal</span> <span class="o">/</span> <span class="n">max_value</span></div>
+
+
+
+<div class="viewcode-block" id="preprocess_sensor_data">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.preprocessing.preprocess_sensor_data">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">preprocess_sensor_data</span><span class="p">(</span><span class="n">sensors</span><span class="p">,</span> <span class="n">fs</span><span class="p">,</span> <span class="n">cutoff</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span> <span class="n">window_size</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">filter_order</span><span class="o">=</span><span class="mi">4</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apply smoothing and low-pass filtering to all sensors (WITHOUT independent axis normalization).&quot;&quot;&quot;</span>
+    <span class="n">processed</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">effective_cutoff</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">cutoff</span><span class="p">),</span> <span class="mf">0.45</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">fs</span><span class="p">))</span>
+
+    <span class="k">if</span> <span class="n">effective_cutoff</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">effective_cutoff</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">cutoff</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">sensor_name</span><span class="p">,</span> <span class="n">sensor_data</span> <span class="ow">in</span> <span class="n">sensors</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">processed</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;ts&quot;</span><span class="p">:</span> <span class="n">sensor_data</span><span class="p">[</span><span class="s2">&quot;ts&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()}</span>
+
+        <span class="k">for</span> <span class="n">axis</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;x&quot;</span><span class="p">,</span> <span class="s2">&quot;y&quot;</span><span class="p">,</span> <span class="s2">&quot;z&quot;</span><span class="p">]:</span>
+            <span class="n">signal</span> <span class="o">=</span> <span class="n">sensor_data</span><span class="p">[</span><span class="n">axis</span><span class="p">]</span>
+            <span class="c1"># Pipeline: glajenje -&gt; low pass filter</span>
+            <span class="n">signal</span> <span class="o">=</span> <span class="n">smooth_signal</span><span class="p">(</span><span class="n">signal</span><span class="p">,</span> <span class="n">window_size</span><span class="o">=</span><span class="n">window_size</span><span class="p">)</span>
+            <span class="n">signal</span> <span class="o">=</span> <span class="n">lowpass_filter</span><span class="p">(</span><span class="n">signal</span><span class="p">,</span> <span class="n">fs</span><span class="p">,</span> <span class="n">effective_cutoff</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="n">filter_order</span><span class="p">)</span>
+            
+            <span class="c1"># POPRAVEK: Tukaj NE izvajamo več normalize_signal(signal), </span>
+            <span class="c1"># saj bi s tem uničili medsebojno razmerje osi (vektor gravitacije).</span>
+            <span class="n">processed</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">][</span><span class="n">axis</span><span class="p">]</span> <span class="o">=</span> <span class="n">signal</span>
+
+    <span class="k">return</span> <span class="n">processed</span></div>
+
+
+
+<div class="viewcode-block" id="plot_before_after">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.preprocessing.plot_before_after">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">plot_before_after</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">raw</span><span class="p">,</span> <span class="n">processed</span><span class="p">,</span> <span class="n">title</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Plot raw and processed signal.&quot;&quot;&quot;</span>
+    <span class="n">ts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+    <span class="n">ts</span> <span class="o">=</span> <span class="n">ts</span> <span class="o">-</span> <span class="n">ts</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">positive_diffs</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">))</span>
+    <span class="n">positive_diffs</span> <span class="o">=</span> <span class="n">positive_diffs</span><span class="p">[</span><span class="n">positive_diffs</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">positive_diffs</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">np</span><span class="o">.</span><span class="n">median</span><span class="p">(</span><span class="n">positive_diffs</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">10</span><span class="p">:</span>
+        <span class="n">ts</span> <span class="o">=</span> <span class="n">ts</span> <span class="o">/</span> <span class="mf">1000.0</span>
+
+    <span class="n">raw_plot</span> <span class="o">=</span> <span class="n">normalize_signal</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
+
+    <span class="n">plt</span><span class="o">.</span><span class="n">figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">4</span><span class="p">))</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">raw_plot</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Raw&quot;</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">processed</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Processed&quot;</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="n">title</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">xlabel</span><span class="p">(</span><span class="s2">&quot;Time (s)&quot;</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">ylabel</span><span class="p">(</span><span class="s2">&quot;Amplitude&quot;</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">legend</span><span class="p">()</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span></div>
+
+
+
+<div class="viewcode-block" id="estimate_sampling_rate">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.preprocessing.estimate_sampling_rate">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">estimate_sampling_rate</span><span class="p">(</span><span class="n">ts</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Estimate sampling rate from timestamps.&quot;&quot;&quot;</span>
+    <span class="n">ts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+    <span class="n">diffs</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="n">ts</span><span class="p">)</span>
+    <span class="n">diffs</span> <span class="o">=</span> <span class="n">diffs</span><span class="p">[</span><span class="n">diffs</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">diffs</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">1.0</span>
+
+    <span class="n">step</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">median</span><span class="p">(</span><span class="n">diffs</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">step</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">1.0</span>
+
+    <span class="k">if</span> <span class="n">step</span> <span class="o">&gt;</span> <span class="mi">10</span><span class="p">:</span>
+        <span class="n">step</span> <span class="o">=</span> <span class="n">step</span> <span class="o">/</span> <span class="mf">1000.0</span>
+
+    <span class="k">return</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">step</span></div>
+
+
+
+<div class="viewcode-block" id="save_preprocessed_data">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.preprocessing.save_preprocessed_data">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">save_preprocessed_data</span><span class="p">(</span><span class="n">processed</span><span class="p">,</span> <span class="n">filepath</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Save processed sensor data to .npz with columns: ts, x, y, z.&quot;&quot;&quot;</span>
+    <span class="n">arrays</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">for</span> <span class="n">sensor_name</span><span class="p">,</span> <span class="n">sensor_data</span> <span class="ow">in</span> <span class="n">processed</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">arrays</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">column_stack</span><span class="p">(</span>
+            <span class="p">[</span><span class="n">sensor_data</span><span class="p">[</span><span class="s2">&quot;ts&quot;</span><span class="p">],</span> <span class="n">sensor_data</span><span class="p">[</span><span class="s2">&quot;x&quot;</span><span class="p">],</span> <span class="n">sensor_data</span><span class="p">[</span><span class="s2">&quot;y&quot;</span><span class="p">],</span> <span class="n">sensor_data</span><span class="p">[</span><span class="s2">&quot;z&quot;</span><span class="p">]]</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+    <span class="n">np</span><span class="o">.</span><span class="n">savez</span><span class="p">(</span><span class="n">filepath</span><span class="p">,</span> <span class="o">**</span><span class="n">arrays</span><span class="p">)</span></div>
+
+    
+    
+<span class="k">def</span><span class="w"> </span><span class="nf">_timestamps_to_seconds</span><span class="p">(</span><span class="n">ts</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert timestamps to seconds&quot;&quot;&quot;</span>
+    <span class="n">ts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+
+    <span class="n">diffs</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="n">ts</span><span class="p">)</span>
+    <span class="n">diffs</span> <span class="o">=</span> <span class="n">diffs</span><span class="p">[</span><span class="n">diffs</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span>
+    
+    <span class="k">return</span> <span class="n">ts</span> <span class="o">/</span> <span class="mf">1000.0</span>
+
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;if len(diffs) &gt; 0 and np.median(diffs) &gt; 10:</span>
+<span class="sd">        return ts / 1000.0</span>
+
+<span class="sd">    return ts&quot;&quot;&quot;</span>
+
+
+<div class="viewcode-block" id="resample_sensors_to_common_grid">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.preprocessing.resample_sensors_to_common_grid">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">resample_sensors_to_common_grid</span><span class="p">(</span><span class="n">sensors</span><span class="p">,</span> <span class="n">target_fs</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Resample all sensors to the same timestamp grid.&quot;&quot;&quot;</span>
+    <span class="n">converted</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">for</span> <span class="n">sensor_name</span><span class="p">,</span> <span class="n">sensor_data</span> <span class="ow">in</span> <span class="n">sensors</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">converted</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;ts&quot;</span><span class="p">:</span> <span class="n">_timestamps_to_seconds</span><span class="p">(</span><span class="n">sensor_data</span><span class="p">[</span><span class="s2">&quot;ts&quot;</span><span class="p">]),</span>
+            <span class="s2">&quot;x&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">sensor_data</span><span class="p">[</span><span class="s2">&quot;x&quot;</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">),</span>
+            <span class="s2">&quot;y&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">sensor_data</span><span class="p">[</span><span class="s2">&quot;y&quot;</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">),</span>
+            <span class="s2">&quot;z&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">sensor_data</span><span class="p">[</span><span class="s2">&quot;z&quot;</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">),</span>
+        <span class="p">}</span>
+
+    <span class="k">if</span> <span class="n">target_fs</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">target_fs</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span>
+            <span class="n">estimate_sampling_rate</span><span class="p">(</span><span class="n">sensor_data</span><span class="p">[</span><span class="s2">&quot;ts&quot;</span><span class="p">])</span>
+            <span class="k">for</span> <span class="n">sensor_data</span> <span class="ow">in</span> <span class="n">converted</span><span class="o">.</span><span class="n">values</span><span class="p">()</span>
+        <span class="p">)</span>
+
+    <span class="n">start</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">sensor_data</span><span class="p">[</span><span class="s2">&quot;ts&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">sensor_data</span> <span class="ow">in</span> <span class="n">converted</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+    <span class="n">end</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">sensor_data</span><span class="p">[</span><span class="s2">&quot;ts&quot;</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="k">for</span> <span class="n">sensor_data</span> <span class="ow">in</span> <span class="n">converted</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+
+    <span class="n">common_ts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">start</span><span class="p">,</span> <span class="n">end</span><span class="p">,</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">target_fs</span><span class="p">)</span>
+
+    <span class="n">resampled</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">for</span> <span class="n">sensor_name</span><span class="p">,</span> <span class="n">sensor_data</span> <span class="ow">in</span> <span class="n">converted</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">resampled</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;ts&quot;</span><span class="p">:</span> <span class="n">common_ts</span> <span class="o">-</span> <span class="n">common_ts</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+        <span class="p">}</span>
+
+        <span class="k">for</span> <span class="n">axis</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;x&quot;</span><span class="p">,</span> <span class="s2">&quot;y&quot;</span><span class="p">,</span> <span class="s2">&quot;z&quot;</span><span class="p">]:</span>
+            <span class="n">resampled</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">][</span><span class="n">axis</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">interp</span><span class="p">(</span>
+                <span class="n">common_ts</span><span class="p">,</span>
+                <span class="n">sensor_data</span><span class="p">[</span><span class="s2">&quot;ts&quot;</span><span class="p">],</span>
+                <span class="n">sensor_data</span><span class="p">[</span><span class="n">axis</span><span class="p">],</span>
+            <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">resampled</span></div>
+
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../index.html">AutoDNA</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules.html">App Modules</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../ai.html">AI / Signal Processing (<code class="docutils literal notranslate"><span class="pre">ai/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../stm32.html">STM32 Binary Parser (<code class="docutils literal notranslate"><span class="pre">stm32/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tests.html">Test Suite (<code class="docutils literal notranslate"><span class="pre">tests/</span></code>)</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2026, AutoDNA Project.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.1.0</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

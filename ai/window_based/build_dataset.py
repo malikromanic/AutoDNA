@@ -31,6 +31,7 @@ from AutoDNA.ai.preprocessing import load_sensor_data, resample_sensors_to_commo
 # ── Helper Funkcije ──────────────────────────────────────────────────────────
 
 def _log_number_from_path(npz_path):
+    """Extract the integer log number from a filename stem, or ``None`` if absent."""
     import re
     m = re.search(r'(\d+)', Path(npz_path).stem)
     return int(m.group(1)) if m else None
@@ -57,6 +58,11 @@ def get_dominant_label(t_start, t_end, labels, label_key):
     return best_label if (best_overlap / (t_end - t_start)) >= 0.4 else 'none'
 
 def make_windows(signal, t, labels, log_idx, window_size, stride, label_key):
+    """Slide a fixed window over *signal* and emit ``(X, Y, log_ids)`` arrays.
+
+    Each window is labelled by the dominant turn/hill class overlapping its time
+    span; *log_idx* tags every window with its source recording (for GroupKFold).
+    """
     X, Y, log_ids = [], [], []
     label_map = TURN_MAP if label_key == 'turn' else HILL_MAP
     
@@ -75,6 +81,10 @@ def make_windows(signal, t, labels, log_idx, window_size, stride, label_key):
 # ── Glavni Pipeline ──────────────────────────────────────────────────────────
 
 def process_log(npz_path, json_path, log_idx):
+    """Load, resample, preprocess and window one recording into turn/hill datasets.
+
+    :returns: ``((X_turn, Y_turn, ids_turn), (X_hill, Y_hill, ids_hill))``.
+    """
     sensors   = load_sensor_data(npz_path)
     resampled = resample_sensors_to_common_grid(sensors, target_fs=TARGET_FS)
     processed = preprocess_sensor_data(resampled, fs=TARGET_FS)
@@ -105,6 +115,7 @@ def process_log(npz_path, json_path, log_idx):
     return (X_t, Y_t, ids_t), (X_h, Y_h, ids_h)
 
 def main():
+    """Window every labelled recording and save the concatenated turn/hill ``.npy`` arrays."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     npz_files = sorted(NPZ_DIR.glob('*.npz'))
 

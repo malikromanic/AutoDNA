@@ -1,3 +1,10 @@
+"""Live serial viewer for the STM32 logger.
+
+Reads the raw byte stream from the device on ``PORT``, saves it to
+``sensor.bin``, decodes ``0xFF 0xFF``-delimited packets on the fly, and
+animates a rolling 5-second window of gyro/accel/mag samples with matplotlib.
+"""
+
 import queue
 import threading
 from collections import deque
@@ -18,15 +25,28 @@ SENSOR_IDS = [1, 2, 3]
 SENSOR_NAMES = ["Gyroscope", "Accelerometer", "Magnetometer"]
 buffers: dict[int, deque] = {}
 
-fig, graphs = plt.subplots(3, figsize=(10, 8))
+fig = None
+graphs = None
 lines = []
-for graph, name in zip(graphs, SENSOR_NAMES):
-    graph.set_title(name)
-    graph.set_xlabel("Time (s)")
-    sensor_lines = [graph.plot([], [], label=c)[0] for c in ("x", "y", "z")]
-    graph.legend(loc="upper right")
-    lines.append(sensor_lines)
-plt.tight_layout()
+
+
+def _build_figure():
+    """Create the 3-panel figure and per-axis line objects.
+
+    Deferred into a function (rather than run at import time) so that importing
+    this module has no matplotlib side effects — e.g. for building the docs.
+    """
+    global fig, graphs, lines
+    fig, graphs = plt.subplots(3, figsize=(10, 8))
+    lines = []
+    for graph, name in zip(graphs, SENSOR_NAMES):
+        graph.set_title(name)
+        graph.set_xlabel("Time (s)")
+        sensor_lines = [graph.plot([], [], label=c)[0] for c in ("x", "y", "z")]
+        graph.legend(loc="upper right")
+        lines.append(sensor_lines)
+    plt.tight_layout()
+
 
 sensors_fvz = {
     1: 100,
@@ -36,6 +56,7 @@ sensors_fvz = {
 
 
 def serial_processor():
+    """Background thread: read the serial port, log raw bytes, and queue parsed packets."""
     global running
     buffer = bytearray()
     try:
@@ -72,6 +93,7 @@ def serial_processor():
 
 
 def update(_frame):
+    """matplotlib animation callback: drain the queue and redraw each sensor's window."""
     while not data_queue.empty():
         packets = data_queue.get_nowait()
         grouped = group_packets(packets)
@@ -97,6 +119,8 @@ def update(_frame):
 
 
 def graphing():
+    """Build the figure, start the serial-reader thread, and run the live animation."""
+    _build_figure()
     thread = threading.Thread(target=serial_processor, daemon=True)
     thread.start()
     ani = FuncAnimation(fig, update, interval=100, blit=True,  # noqa: F841

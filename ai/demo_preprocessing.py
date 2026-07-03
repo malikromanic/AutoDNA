@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 
-from preprocessing import (
+from AutoDNA.ai.preprocessing import (
     load_sensor_data,
     estimate_sampling_rate,
     preprocess_sensor_data,
@@ -64,6 +64,7 @@ def plot_sensor_all_axes(sensor_name, raw_sensor, processed_sensor):
 
 
 def main():
+    """Load one recording, preprocess every sensor, save it, and plot raw vs processed."""
     #load podatkov za enoten preprocessing pipeline
     sensors = load_sensor_data(DATA_FILE)
     

@@ -1,3 +1,12 @@
+"""Decode the STM32 data-logger binary format into :class:`~AutoDNA.stm32.bin_parser.packet.Packet` objects.
+
+Wire format: packets are framed by ``0xFF 0xFF``; the payload is byte-stuffed
+(``0xFE`` escape) and protected by a trailing CRC16 (Modbus, poly ``0xA001``).
+Each payload carries a 32-bit millisecond timestamp and one or more sensor chunks
+of int16 XYZ samples. This module parses that format and converts to/from
+``.npz`` for downstream processing.
+"""
+
 import struct
 from collections import defaultdict
 import numpy as np
@@ -5,6 +14,12 @@ from AutoDNA.stm32.bin_parser.packet import Packet, CHUNK_NAMES
 
 
 def unstuff_bytes(data: bytes) -> bytes:
+    """Reverse the ``0xFE`` byte-stuffing.
+
+    Each ``0xFE`` marks an escaped byte; the following byte is XORed with
+    ``0xFE`` to recover the original. Raises :class:`ValueError` if the data ends
+    on a dangling escape.
+    """
     result = []
     i = 0
     while i < len(data):
@@ -20,6 +35,7 @@ def unstuff_bytes(data: bytes) -> bytes:
 
 
 def crc16_update(crc: int, byte: int) -> int:
+    """Fold one byte into a running CRC16 (Modbus, polynomial ``0xA001``)."""
     crc ^= byte
     for _ in range(8):
         if crc & 1:
@@ -30,6 +46,7 @@ def crc16_update(crc: int, byte: int) -> int:
 
 
 def crc16_compute(data: bytes) -> int:
+    """CRC16 (Modbus) over ``data``, starting from the initial value ``0xFFFF``."""
     crc = 0xFFFF
     for byte in data:
         crc = crc16_update(crc, byte)
@@ -37,6 +54,12 @@ def crc16_compute(data: bytes) -> int:
 
 
 def parse_packet(data: bytes) -> list[Packet] | None:
+    """Parse one framed packet into a list of :class:`Packet`.
+
+    :param data: Bytes starting at the ``0xFF 0xFF`` frame header.
+    :returns: One :class:`Packet` per sensor chunk in the frame, or ``None`` if
+        the header is missing or the CRC check fails.
+    """
     if data[0:2] != b'\xFF\xFF':
         return None
 
@@ -72,6 +95,11 @@ def parse_packet(data: bytes) -> list[Packet] | None:
 
 
 def read_packets_from_file(filepath: str) -> list[Packet]:
+    """Read a whole ``.BIN`` recording and return every parsed :class:`Packet`.
+
+    Scans for ``0xFF 0xFF`` frame markers and parses each frame; frames that fail
+    to parse (bad CRC, truncation) are skipped rather than aborting the read.
+    """
     with open(filepath, 'rb') as f:
         stream = f.read()
 
@@ -109,6 +137,10 @@ def read_packets_from_file(filepath: str) -> list[Packet]:
 
 
 def save_to_npz(packets: list[Packet], filepath: str) -> None:
+    """Save packets to a ``.npz``: one array per sensor with columns ``[ts, x, y, z]``.
+
+    A ``.npz`` extension is appended if missing.
+    """
     sensor_rows: dict[str, list] = {}
 
     for p in packets:
@@ -132,6 +164,8 @@ def save_to_npz(packets: list[Packet], filepath: str) -> None:
 
 
 def load_from_npz(filepath: str) -> list[Packet]:
+    """Inverse of :func:`save_to_npz`: load a ``.npz`` back into :class:`Packet`
+    objects, sorted by ``(ts, id)``."""
     data = np.load(filepath)
     name_to_id = {v: k for k, v in CHUNK_NAMES.items()}
 
@@ -156,6 +190,7 @@ def load_from_npz(filepath: str) -> list[Packet]:
 
 
 def group_packets(seznam_paketov: list[Packet]) -> dict:
+    """Group packets by their chunk ``id`` into a ``{id: [Packet, ...]}`` dict."""
     ret = defaultdict(list)
     for p in seznam_paketov:
         ret[p.id].append(p)

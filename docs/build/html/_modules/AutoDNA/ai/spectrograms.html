@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoDNA.ai.spectrograms &#8212; AutoDNA 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../../_static/documentation_options.js?v=f2a433a1"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for AutoDNA.ai.spectrograms</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Reusable spectrogram conversion functions for preprocessed sensor data.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy.signal</span><span class="w"> </span><span class="kn">import</span> <span class="n">stft</span>
+
+
+<div class="viewcode-block" id="load_sensor_data">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.spectrograms.load_sensor_data">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_sensor_data</span><span class="p">(</span><span class="n">filepath</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Load .npz sensor data into a common dictionary format.&quot;&quot;&quot;</span>
+    <span class="n">sensors</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">with</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">filepath</span><span class="p">,</span> <span class="n">allow_pickle</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="k">as</span> <span class="n">raw</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">sensor_name</span> <span class="ow">in</span> <span class="n">raw</span><span class="o">.</span><span class="n">files</span><span class="p">:</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">]</span>
+
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="ow">and</span> <span class="n">data</span><span class="o">.</span><span class="n">dtype</span> <span class="o">==</span> <span class="nb">object</span><span class="p">:</span>
+                <span class="n">data</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="k">if</span> <span class="n">data</span><span class="o">.</span><span class="n">shape</span> <span class="o">==</span> <span class="p">()</span> <span class="k">else</span> <span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+                <span class="n">ts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;ts&quot;</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+                <span class="n">x</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;x&quot;</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+                <span class="n">y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;y&quot;</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+                <span class="n">z</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s2">&quot;z&quot;</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="n">data</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">2</span> <span class="ow">or</span> <span class="n">data</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">&lt;</span> <span class="mi">4</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">sensor_name</span><span class="si">}</span><span class="s2"> must have columns: timestamp, x, y, z&quot;</span>
+                    <span class="p">)</span>
+
+                <span class="n">order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">data</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">])</span>
+                <span class="n">data</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="n">order</span><span class="p">]</span>
+
+                <span class="n">ts</span> <span class="o">=</span> <span class="n">data</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span>
+                <span class="n">x</span> <span class="o">=</span> <span class="n">data</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]</span>
+                <span class="n">y</span> <span class="o">=</span> <span class="n">data</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">]</span>
+                <span class="n">z</span> <span class="o">=</span> <span class="n">data</span><span class="p">[:,</span> <span class="mi">3</span><span class="p">]</span>
+
+            <span class="n">sensors</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s2">&quot;ts&quot;</span><span class="p">:</span> <span class="n">ts</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span>
+                <span class="s2">&quot;x&quot;</span><span class="p">:</span> <span class="n">x</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span>
+                <span class="s2">&quot;y&quot;</span><span class="p">:</span> <span class="n">y</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span>
+                <span class="s2">&quot;z&quot;</span><span class="p">:</span> <span class="n">z</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">float</span><span class="p">),</span>
+            <span class="p">}</span>
+
+    <span class="k">return</span> <span class="n">sensors</span></div>
+
+
+
+<div class="viewcode-block" id="estimate_sampling_rate">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.spectrograms.estimate_sampling_rate">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">estimate_sampling_rate</span><span class="p">(</span><span class="n">ts</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Estimate sampling rate from timestamps.&quot;&quot;&quot;</span>
+    <span class="n">ts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+    <span class="n">diffs</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="n">ts</span><span class="p">)</span>
+    <span class="n">diffs</span> <span class="o">=</span> <span class="n">diffs</span><span class="p">[</span><span class="n">diffs</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">diffs</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">1.0</span>
+
+    <span class="n">step</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">median</span><span class="p">(</span><span class="n">diffs</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">step</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">1.0</span>
+
+    <span class="k">if</span> <span class="n">step</span> <span class="o">&gt;</span> <span class="mi">10</span><span class="p">:</span>
+        <span class="c1">#pretvorba ms v s ce so timestampi v milisekundah</span>
+        <span class="n">step</span> <span class="o">=</span> <span class="n">step</span> <span class="o">/</span> <span class="mf">1000.0</span>
+
+    <span class="k">return</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">step</span></div>
+
+
+
+<div class="viewcode-block" id="compute_stft_spectrogram">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.spectrograms.compute_stft_spectrogram">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_stft_spectrogram</span><span class="p">(</span><span class="n">signal</span><span class="p">,</span> <span class="n">fs</span><span class="p">,</span> <span class="n">nperseg</span><span class="p">,</span> <span class="n">noverlap</span><span class="p">,</span> <span class="n">nfft</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute STFT spectrogram in decibels (dB).&quot;&quot;&quot;</span>
+    <span class="n">signal</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">signal</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+
+    <span class="c1">#stft pretvorba 1d signala v spektrogram</span>
+    <span class="c1">#segmentacija preko okna in overlap parametrov</span>
+    <span class="n">frequencies</span><span class="p">,</span> <span class="n">times</span><span class="p">,</span> <span class="n">zxx</span> <span class="o">=</span> <span class="n">stft</span><span class="p">(</span>
+        <span class="n">signal</span><span class="p">,</span>
+        <span class="n">fs</span><span class="o">=</span><span class="n">fs</span><span class="p">,</span>
+        <span class="n">window</span><span class="o">=</span><span class="s2">&quot;hann&quot;</span><span class="p">,</span>
+        <span class="n">nperseg</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">nperseg</span><span class="p">),</span>
+        <span class="n">noverlap</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">noverlap</span><span class="p">),</span>
+        <span class="n">nfft</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">nfft</span><span class="p">),</span>
+        <span class="n">boundary</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">padded</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">magnitude</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">zxx</span><span class="p">)</span>
+    <span class="c1">#pretvorba v db poudari razlike med dogodki</span>
+    <span class="n">spectrogram_db</span> <span class="o">=</span> <span class="mf">20.0</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="n">magnitude</span> <span class="o">+</span> <span class="mf">1e-8</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">frequencies</span><span class="p">,</span> <span class="n">times</span><span class="p">,</span> <span class="n">spectrogram_db</span></div>
+
+
+
+<div class="viewcode-block" id="normalize_spectrogram_to_uint8">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.spectrograms.normalize_spectrogram_to_uint8">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">normalize_spectrogram_to_uint8</span><span class="p">(</span><span class="n">spectrogram</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Normalize spectrogram values to 8-bit range [0, 255].&quot;&quot;&quot;</span>
+    <span class="n">spectrogram</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">spectrogram</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+    <span class="n">finite_mask</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">isfinite</span><span class="p">(</span><span class="n">spectrogram</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">np</span><span class="o">.</span><span class="n">any</span><span class="p">(</span><span class="n">finite_mask</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">spectrogram</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">)</span>
+
+    <span class="n">min_value</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">spectrogram</span><span class="p">[</span><span class="n">finite_mask</span><span class="p">]))</span>
+    <span class="n">max_value</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">spectrogram</span><span class="p">[</span><span class="n">finite_mask</span><span class="p">]))</span>
+
+    <span class="k">if</span> <span class="n">max_value</span> <span class="o">&lt;=</span> <span class="n">min_value</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">spectrogram</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">)</span>
+
+    <span class="n">normalized</span> <span class="o">=</span> <span class="p">(</span><span class="n">spectrogram</span> <span class="o">-</span> <span class="n">min_value</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">max_value</span> <span class="o">-</span> <span class="n">min_value</span><span class="p">)</span>
+    <span class="n">normalized</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">normalized</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+    <span class="n">normalized</span><span class="p">[</span><span class="o">~</span><span class="n">finite_mask</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+    <span class="c1">#normalizacija amplitude na [0,255] za vhod v cnn</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">normalized</span> <span class="o">*</span> <span class="mf">255.0</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="create_rgb_spectrogram">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.spectrograms.create_rgb_spectrogram">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">create_rgb_spectrogram</span><span class="p">(</span><span class="n">sensor_data</span><span class="p">,</span> <span class="n">fs</span><span class="p">,</span> <span class="n">nperseg</span><span class="p">,</span> <span class="n">noverlap</span><span class="p">,</span> <span class="n">nfft</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Create one RGB spectrogram image from x/y/z channels.&quot;&quot;&quot;</span>
+    <span class="n">required_axes</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;x&quot;</span><span class="p">,</span> <span class="s2">&quot;y&quot;</span><span class="p">,</span> <span class="s2">&quot;z&quot;</span><span class="p">]</span>
+    <span class="k">for</span> <span class="n">axis</span> <span class="ow">in</span> <span class="n">required_axes</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">axis</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">sensor_data</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Missing axis &#39;</span><span class="si">{</span><span class="n">axis</span><span class="si">}</span><span class="s2">&#39; in sensor data&quot;</span><span class="p">)</span>
+
+    <span class="n">spectrograms</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">frequencies</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">times</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">for</span> <span class="n">axis</span> <span class="ow">in</span> <span class="n">required_axes</span><span class="p">:</span>
+        <span class="n">frequencies</span><span class="p">,</span> <span class="n">times</span><span class="p">,</span> <span class="n">spectrogram</span> <span class="o">=</span> <span class="n">compute_stft_spectrogram</span><span class="p">(</span>
+            <span class="n">sensor_data</span><span class="p">[</span><span class="n">axis</span><span class="p">],</span> <span class="n">fs</span><span class="p">,</span> <span class="n">nperseg</span><span class="p">,</span> <span class="n">noverlap</span><span class="p">,</span> <span class="n">nfft</span>
+        <span class="p">)</span>
+        <span class="n">spectrograms</span><span class="p">[</span><span class="n">axis</span><span class="p">]</span> <span class="o">=</span> <span class="n">spectrogram</span>
+
+    <span class="c1">#vsi kanali dobijo isto casovno in frekvencno mrezo</span>
+    <span class="c1">#rgb pakiranje osi: x-&gt;r, y-&gt;g, z-&gt;b</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">normalize_spectrogram_to_uint8</span><span class="p">(</span><span class="n">spectrograms</span><span class="p">[</span><span class="s2">&quot;x&quot;</span><span class="p">])</span>
+    <span class="n">g</span> <span class="o">=</span> <span class="n">normalize_spectrogram_to_uint8</span><span class="p">(</span><span class="n">spectrograms</span><span class="p">[</span><span class="s2">&quot;y&quot;</span><span class="p">])</span>
+    <span class="n">b</span> <span class="o">=</span> <span class="n">normalize_spectrogram_to_uint8</span><span class="p">(</span><span class="n">spectrograms</span><span class="p">[</span><span class="s2">&quot;z&quot;</span><span class="p">])</span>
+
+    <span class="n">rgb_image</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">r</span><span class="p">,</span> <span class="n">g</span><span class="p">,</span> <span class="n">b</span><span class="p">],</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">frequencies</span><span class="p">,</span> <span class="n">times</span><span class="p">,</span> <span class="n">spectrograms</span><span class="p">,</span> <span class="n">rgb_image</span></div>
+
+
+
+<div class="viewcode-block" id="save_spectrogram_image">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.spectrograms.save_spectrogram_image">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">save_spectrogram_image</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">filepath</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Save spectrogram image to disk.&quot;&quot;&quot;</span>
+    <span class="n">filepath</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">filepath</span><span class="p">)</span>
+    <span class="n">filepath</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="n">image</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+    <span class="c1">#moznost shranjevanja rezultatov kot slike</span>
+    <span class="k">if</span> <span class="n">image</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="n">plt</span><span class="o">.</span><span class="n">imsave</span><span class="p">(</span><span class="n">filepath</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;viridis&quot;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">plt</span><span class="o">.</span><span class="n">imsave</span><span class="p">(</span><span class="n">filepath</span><span class="p">,</span> <span class="n">image</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="plot_spectrogram">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.spectrograms.plot_spectrogram">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">plot_spectrogram</span><span class="p">(</span><span class="n">frequencies</span><span class="p">,</span> <span class="n">times</span><span class="p">,</span> <span class="n">spectrogram</span><span class="p">,</span> <span class="n">title</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Plot a single spectrogram with proper axis labels.&quot;&quot;&quot;</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">5</span><span class="p">))</span>
+    <span class="n">mesh</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">pcolormesh</span><span class="p">(</span><span class="n">times</span><span class="p">,</span> <span class="n">frequencies</span><span class="p">,</span> <span class="n">spectrogram</span><span class="p">,</span> <span class="n">shading</span><span class="o">=</span><span class="s2">&quot;gouraud&quot;</span><span class="p">,</span> <span class="n">cmap</span><span class="o">=</span><span class="s2">&quot;viridis&quot;</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="n">title</span><span class="p">)</span>
+    <span class="c1">#pravilno oznacene osi za obrambo in analizo</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">xlabel</span><span class="p">(</span><span class="s2">&quot;Time (s)&quot;</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">ylabel</span><span class="p">(</span><span class="s2">&quot;Frequency (Hz)&quot;</span><span class="p">)</span>
+    <span class="n">cbar</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">colorbar</span><span class="p">(</span><span class="n">mesh</span><span class="p">)</span>
+    <span class="n">cbar</span><span class="o">.</span><span class="n">set_label</span><span class="p">(</span><span class="s2">&quot;Amplitude (dB)&quot;</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span></div>
+
+
+
+<div class="viewcode-block" id="convert_all_sensors_to_spectrograms">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.spectrograms.convert_all_sensors_to_spectrograms">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">convert_all_sensors_to_spectrograms</span><span class="p">(</span><span class="n">sensors</span><span class="p">,</span> <span class="n">fs</span><span class="p">,</span> <span class="n">nperseg</span><span class="p">,</span> <span class="n">noverlap</span><span class="p">,</span> <span class="n">nfft</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert all sensors in dictionary to spectrogram representations.&quot;&quot;&quot;</span>
+    <span class="n">converted</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="c1">#podpora za vec senzorjev (npr accel gyro mag)</span>
+    <span class="k">for</span> <span class="n">sensor_name</span><span class="p">,</span> <span class="n">sensor_data</span> <span class="ow">in</span> <span class="n">sensors</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="c1">#enaki parametri za vse clane ekipe in vse posnetke</span>
+        <span class="n">frequencies</span><span class="p">,</span> <span class="n">times</span><span class="p">,</span> <span class="n">spectrograms</span><span class="p">,</span> <span class="n">rgb_image</span> <span class="o">=</span> <span class="n">create_rgb_spectrogram</span><span class="p">(</span>
+            <span class="n">sensor_data</span><span class="p">,</span> <span class="n">fs</span><span class="p">,</span> <span class="n">nperseg</span><span class="p">,</span> <span class="n">noverlap</span><span class="p">,</span> <span class="n">nfft</span>
+        <span class="p">)</span>
+        <span class="n">converted</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;frequencies&quot;</span><span class="p">:</span> <span class="n">frequencies</span><span class="p">,</span>
+            <span class="s2">&quot;times&quot;</span><span class="p">:</span> <span class="n">times</span><span class="p">,</span>
+            <span class="s2">&quot;spectrograms&quot;</span><span class="p">:</span> <span class="n">spectrograms</span><span class="p">,</span>
+            <span class="s2">&quot;rgb_image&quot;</span><span class="p">:</span> <span class="n">rgb_image</span><span class="p">,</span>
+        <span class="p">}</span>
+
+    <span class="c1">#reusable funkcije vrnejo direktne vhode za nevronske mreze</span>
+    <span class="c1">#todo razbit dolg signal na vec manjsih training segmentov</span>
+    <span class="k">return</span> <span class="n">converted</span></div>
+
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../index.html">AutoDNA</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules.html">App Modules</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../ai.html">AI / Signal Processing (<code class="docutils literal notranslate"><span class="pre">ai/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../stm32.html">STM32 Data Logger (<code class="docutils literal notranslate"><span class="pre">stm32/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tests.html">Test Suite (<code class="docutils literal notranslate"><span class="pre">tests/</span></code>)</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2026, AutoDNA Project.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.1.0</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

@@ -53,6 +53,7 @@ def flatten_sensors(accel, gyro):
     gyro_flat  = gyro.reshape(F*3, T).T   # (T, F*3)
 
     def minmax(arr):
+        """Min-max scale *arr* to [0, 1] (identity if the array is constant)."""
         mn, mx = arr.min(), arr.max()
         if mx > mn:
             return (arr - mn) / (mx - mn)
@@ -88,6 +89,7 @@ class DriveDataset(Dataset):
         return len(self.files)
  
     def __getitem__(self, idx):
+        """Load sample *idx*, returning ``(x, y)`` tensors of shape ``(T, F*6)`` and ``(T, 7)``."""
         accel, gyro, y = load_training_sample(self.files[idx])
         x = flatten_sensors(accel, gyro)
         return torch.tensor(x), torch.tensor(y)
@@ -143,6 +145,7 @@ class BiLSTM(nn.Module):
 
 
 def pad_collate(batch):
+    """Collate variable-length sequences into a padded batch (features and targets padded with 0)."""
     # Sort batch by sequence length (descending) for packed sequences if needed
     features = [item[0] for item in batch]
     targets = [item[1] for item in batch]
@@ -197,6 +200,7 @@ def stratified_split(sample_files, val_ratio=0.2, seed=42):
 
 
 def compute_pos_weights(dataset, max_weight=2.0, min_weight=0.8):
+    """Estimate per-head BCE pos-weights from class balance, clamped to [min_weight, max_weight]."""
     all_labels = []
     for i in range(len(dataset)):
         _, y = dataset[i]
@@ -218,6 +222,11 @@ def compute_pos_weights(dataset, max_weight=2.0, min_weight=0.8):
 
 
 def masked_loss(pred, target, pw):
+    """Multi-task loss (pos-weighted BCE + L1 angles) over labelled timesteps only.
+
+    Batched variant of :func:`AutoDNA.ai.bilstm.bilstm.masked_loss`; *pw* maps
+    head names to pos-weights.
+    """
     bce_turn = nn.BCEWithLogitsLoss(pos_weight=pw['turn'])
     bce_hill = nn.BCEWithLogitsLoss(pos_weight=pw['hill'])
     bce_straight = nn.BCEWithLogitsLoss(pos_weight=pw['straight'])
@@ -260,6 +269,10 @@ def masked_loss(pred, target, pw):
 
 
 def train_model(model, train_set, val_set, print_info):
+    """Train the batched/padded BiLSTM with early stopping on validation F1.
+
+    Returns ``(train_losses, val_losses, accuracies)`` and writes ``bilstm_best.pth``.
+    """
     if print_info:
         print("Training...\n")
         
@@ -383,6 +396,7 @@ def train_model(model, train_set, val_set, print_info):
 
 
 def measure_epoch_acc(all_preds, all_targets):
+    """Return the mean F1 (%) over the turn/hill/straight presence columns for one epoch."""
     # These will now concatenate perfectly because they are all shape (N, 7)
     all_preds   = torch.cat(all_preds,   dim=0)
     all_targets = torch.cat(all_targets, dim=0)
@@ -513,6 +527,7 @@ def evaluate_model(model, validation_files):
  
     
 def train_once(sample_files, val_ratio=0.2, seed=42):
+    """Train and evaluate one batched BiLSTM on a single stratified split for the given *seed*."""
     if seed is not None:
         random.seed(seed)
 
@@ -550,9 +565,10 @@ def train_once(sample_files, val_ratio=0.2, seed=42):
     
     
 def load_and_test(sample_files, val_ratio=0.2, seed=42):
+    """Load ``bilstm.pth`` and evaluate it on the validation split for the given *seed*."""
     files = sample_files.copy()
     train_files, val_files = stratified_split(files, val_ratio, seed)  # match train_once
-    
+
     accel, gyro, _ = load_training_sample(sample_files[0])
     F = accel.shape[0]
     input_size = F * 3 * 2  # 3 channels * 2 sensors (accel + gyro, no mag)

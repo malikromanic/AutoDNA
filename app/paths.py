@@ -1,8 +1,8 @@
-# ============================================================================
-# AutoDNA — UI-free path helpers
-#
-# Kept out of autodna_app so they can be imported/tested without pulling in PyQt.
-# ============================================================================
+"""UI-free path helpers for AutoDNA.
+
+Kept separate from ``autodna_app`` so they can be imported and tested without
+pulling in PyQt6.
+"""
 
 from pathlib import Path
 

@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoDNA.app.main &#8212; AutoDNA 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../../_static/documentation_options.js?v=f2a433a1"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for AutoDNA.app.main</h1><div class="highlight"><pre>
+<span></span><span class="c1"># ============================================================================</span>
+<span class="c1"># AutoDNA - AI-Powered Driving Analysis Platform</span>
+<span class="c1"># Dashboard Application (PyQt6)</span>
+<span class="c1"># ============================================================================</span>
+<span class="sd">&quot;&quot;&quot;Application entry point.</span>
+
+<span class="sd">Sets up the environment (Qt/WebEngine flags, sys.path, frozen-build</span>
+<span class="sd">paths) before any Qt or AutoDNA import happens, then builds and shows</span>
+<span class="sd">the main window. Also installs a top-level exception handler so startup</span>
+<span class="sd">crashes are written to a log file and, if possible, shown in a message</span>
+<span class="sd">box instead of silently closing the console window.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">traceback</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+<span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;QTWEBENGINE_CHROMIUM_FLAGS&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;--no-sandbox --disable-gpu --disable-software-rasterizer --disable-gpu-compositing&quot;</span>
+
+<span class="c1"># every module imports as &quot;AutoDNA.xxx&quot;, so the GITHUB folder (one level</span>
+<span class="c1"># above AutoDNA/) needs to be on sys.path, not AutoDNA/ itself</span>
+<span class="n">sys</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">parent</span><span class="p">))</span>
+
+<span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">sys</span><span class="p">,</span> <span class="s1">&#39;frozen&#39;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
+    <span class="n">exe_dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">executable</span><span class="p">)</span><span class="o">.</span><span class="n">parent</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">chdir</span><span class="p">(</span><span class="n">exe_dir</span><span class="p">)</span>
+    <span class="n">internal</span> <span class="o">=</span> <span class="n">exe_dir</span> <span class="o">/</span> <span class="s1">&#39;_internal&#39;</span>
+
+    <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;QTWEBENGINEPROCESS_PATH&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span>
+        <span class="n">internal</span> <span class="o">/</span> <span class="s2">&quot;PyQt6&quot;</span> <span class="o">/</span> <span class="s2">&quot;Qt6&quot;</span> <span class="o">/</span> <span class="s2">&quot;bin&quot;</span> <span class="o">/</span> <span class="s2">&quot;QtWebEngineProcess.exe&quot;</span>
+    <span class="p">)</span>
+    <span class="c1"># add _internal to PATH so Qt finds the DLLs there</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;PATH&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">internal</span><span class="p">)</span> <span class="o">+</span> <span class="n">os</span><span class="o">.</span><span class="n">pathsep</span> <span class="o">+</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;PATH&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+    
+<span class="kn">from</span><span class="w"> </span><span class="nn">PyQt6.QtWebEngineWidgets</span><span class="w"> </span><span class="kn">import</span> <span class="n">QWebEngineView</span>  <span class="c1"># noqa: F401</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PyQt6.QtWidgets</span><span class="w"> </span><span class="kn">import</span> <span class="n">QApplication</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PyQt6.QtCore</span><span class="w"> </span><span class="kn">import</span> <span class="n">QLibraryInfo</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">AutoDNA.app.autodna_app</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoDNAApplication</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">AutoDNA.app.get_path</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_data_dir</span>
+
+
+<div class="viewcode-block" id="main">
+<a class="viewcode-back" href="../../../modules.html#AutoDNA.app.main.main">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Create the QApplication, log the active Qt paths, and show the main window.</span>
+
+<span class="sd">    Blocks until the window is closed (``app.exec()``), then exits the</span>
+<span class="sd">    process with Qt&#39;s return code.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">app</span> <span class="o">=</span> <span class="n">QApplication</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">)</span>
+    <span class="n">app</span><span class="o">.</span><span class="n">setStyle</span><span class="p">(</span><span class="s1">&#39;Fusion&#39;</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Qt prefix:      </span><span class="si">{</span><span class="n">QLibraryInfo</span><span class="o">.</span><span class="n">path</span><span class="p">(</span><span class="n">QLibraryInfo</span><span class="o">.</span><span class="n">LibraryPath</span><span class="o">.</span><span class="n">PrefixPath</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Qt data:        </span><span class="si">{</span><span class="n">QLibraryInfo</span><span class="o">.</span><span class="n">path</span><span class="p">(</span><span class="n">QLibraryInfo</span><span class="o">.</span><span class="n">LibraryPath</span><span class="o">.</span><span class="n">DataPath</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Qt plugins:     </span><span class="si">{</span><span class="n">QLibraryInfo</span><span class="o">.</span><span class="n">path</span><span class="p">(</span><span class="n">QLibraryInfo</span><span class="o">.</span><span class="n">LibraryPath</span><span class="o">.</span><span class="n">PluginsPath</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Qt translations:</span><span class="si">{</span><span class="n">QLibraryInfo</span><span class="o">.</span><span class="n">path</span><span class="p">(</span><span class="n">QLibraryInfo</span><span class="o">.</span><span class="n">LibraryPath</span><span class="o">.</span><span class="n">TranslationsPath</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">window</span> <span class="o">=</span> <span class="n">AutoDNAApplication</span><span class="p">()</span>
+    <span class="n">window</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">app</span><span class="o">.</span><span class="n">exec</span><span class="p">())</span></div>
+
+<span class="w">    </span>
+<span class="sd">&quot;&quot;&quot;import sys</span>
+<span class="sd">import traceback</span>
+<span class="sd">import os</span>
+<span class="sd">from pathlib import Path</span>
+
+<span class="sd">os.environ[&quot;QTWEBENGINE_CHROMIUM_FLAGS&quot;] = &quot;--no-sandbox --disable-gpu --disable-software-rasterizer --disable-gpu-compositing&quot;</span>
+
+<span class="sd">if getattr(sys, &#39;frozen&#39;, False):</span>
+<span class="sd">    exe_dir = Path(sys.executable).parent</span>
+<span class="sd">    os.chdir(exe_dir)</span>
+<span class="sd">    </span>
+<span class="sd">    # tell Qt where its resources are</span>
+<span class="sd">    internal = exe_dir / &#39;_internal&#39;</span>
+<span class="sd">    os.environ[&quot;QTWEBENGINEPROCESS_PATH&quot;] = str(</span>
+<span class="sd">        internal / &quot;PyQt6&quot; / &quot;Qt6&quot; / &quot;bin&quot; / &quot;QtWebEngineProcess.exe&quot;</span>
+<span class="sd">    )</span>
+<span class="sd">    os.environ[&quot;QT_QPA_PLATFORM_PLUGIN_PATH&quot;] = str(</span>
+<span class="sd">        internal / &quot;PyQt6&quot; / &quot;Qt6&quot; / &quot;plugins&quot; / &quot;platforms&quot;</span>
+<span class="sd">    )</span>
+<span class="sd">    </span>
+<span class="sd">    # critical — tell WebEngine where its resources are</span>
+<span class="sd">    from PyQt6.QtCore import QCoreApplication</span>
+<span class="sd">    QCoreApplication.addLibraryPath(str(internal / &quot;PyQt6&quot; / &quot;Qt6&quot; / &quot;plugins&quot;))</span>
+
+<span class="sd">   </span>
+<span class="sd">from PyQt6.QtWebEngineWidgets import QWebEngineView  # noqa: F401</span>
+<span class="sd">from PyQt6.QtWidgets import QApplication</span>
+<span class="sd">from AutoDNA.app.autodna_app import AutoDNAApplication</span>
+<span class="sd">from AutoDNA.app.get_path import get_data_dir</span>
+
+
+<span class="sd">def main():</span>
+<span class="sd">    app = QApplication(sys.argv)</span>
+<span class="sd">    app.setStyle(&#39;Fusion&#39;)</span>
+<span class="sd">    </span>
+<span class="sd">    from PyQt6.QtCore import QLibraryInfo </span>
+<span class="sd">    print(f&quot;Qt prefix:      {QLibraryInfo.path(QLibraryInfo.LibraryPath.PrefixPath)}&quot;)</span>
+<span class="sd">    print(f&quot;Qt data:        {QLibraryInfo.path(QLibraryInfo.LibraryPath.DataPath)}&quot;)</span>
+<span class="sd">    print(f&quot;Qt plugins:     {QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath)}&quot;)</span>
+<span class="sd">    print(f&quot;Qt translations:{QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)}&quot;)</span>
+
+<span class="sd">    window = AutoDNAApplication()</span>
+<span class="sd">    window.show()</span>
+
+<span class="sd">    sys.exit(app.exec())&quot;&quot;&quot;</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">main</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">log_path</span> <span class="o">=</span> <span class="n">get_data_dir</span><span class="p">()</span> <span class="o">/</span> <span class="s2">&quot;autodna_crash.log&quot;</span>
+        <span class="n">tb</span> <span class="o">=</span> <span class="n">traceback</span><span class="o">.</span><span class="n">format_exc</span><span class="p">()</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">log_path</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">tb</span><span class="p">)</span>
+
+        <span class="c1">#poskusi prikazati uporabniku prijazno sporocilo v gui oknu</span>
+        <span class="c1">#tukaj sem dodal ADNA-54</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">PyQt6.QtWidgets</span><span class="w"> </span><span class="kn">import</span> <span class="n">QApplication</span><span class="p">,</span> <span class="n">QMessageBox</span>
+            <span class="n">app</span> <span class="o">=</span> <span class="n">QApplication</span><span class="o">.</span><span class="n">instance</span><span class="p">()</span> <span class="ow">or</span> <span class="n">QApplication</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">)</span>
+            <span class="n">dlg</span> <span class="o">=</span> <span class="n">QMessageBox</span><span class="p">()</span>
+            <span class="n">dlg</span><span class="o">.</span><span class="n">setIcon</span><span class="p">(</span><span class="n">QMessageBox</span><span class="o">.</span><span class="n">Icon</span><span class="o">.</span><span class="n">Critical</span><span class="p">)</span>
+            <span class="n">dlg</span><span class="o">.</span><span class="n">setWindowTitle</span><span class="p">(</span><span class="s2">&quot;AutoDNA — Startup Error&quot;</span><span class="p">)</span>
+            <span class="n">dlg</span><span class="o">.</span><span class="n">setText</span><span class="p">(</span><span class="s2">&quot;&lt;b&gt;The application failed to start.&lt;/b&gt;&quot;</span><span class="p">)</span>
+            <span class="n">dlg</span><span class="o">.</span><span class="n">setInformativeText</span><span class="p">(</span>
+                <span class="s2">&quot;AutoDNA could not launch due to an initialization error.</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+                <span class="s2">&quot;Possible causes:</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="s2">&quot;  • missing Python packages (run: pip install -r requirements.txt)</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="s2">&quot;  • incompatible Python version</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="s2">&quot;  • corrupted installation</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+                <span class="s2">&quot;Error details have been saved to autodna_crash.log.&quot;</span>
+            <span class="p">)</span>
+            <span class="n">dlg</span><span class="o">.</span><span class="n">setDetailedText</span><span class="p">(</span><span class="n">tb</span><span class="p">)</span>
+            <span class="n">dlg</span><span class="o">.</span><span class="n">setStandardButtons</span><span class="p">(</span><span class="n">QMessageBox</span><span class="o">.</span><span class="n">StandardButton</span><span class="o">.</span><span class="n">Ok</span><span class="p">)</span>
+            <span class="n">dlg</span><span class="o">.</span><span class="n">exec</span><span class="p">()</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="c1">#gui ni na voljo - izpisi v terminal</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">AutoDNA failed to start: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Full traceback saved to: </span><span class="si">{</span><span class="n">log_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">traceback</span><span class="o">.</span><span class="n">print_exc</span><span class="p">()</span>
+            <span class="nb">input</span><span class="p">(</span><span class="s2">&quot;Press Enter to close...&quot;</span><span class="p">)</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../index.html">AutoDNA</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules.html">App Modules</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../ai.html">AI / Signal Processing (<code class="docutils literal notranslate"><span class="pre">ai/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../stm32.html">STM32 Binary Parser (<code class="docutils literal notranslate"><span class="pre">stm32/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tests.html">Test Suite (<code class="docutils literal notranslate"><span class="pre">tests/</span></code>)</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2026, AutoDNA Project.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.1.0</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

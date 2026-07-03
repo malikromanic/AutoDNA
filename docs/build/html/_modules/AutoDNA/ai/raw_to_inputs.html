@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoDNA.ai.raw_to_inputs &#8212; AutoDNA 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../../_static/documentation_options.js?v=f2a433a1"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for AutoDNA.ai.raw_to_inputs</h1><div class="highlight"><pre>
+<span></span><span class="c1"># -*- coding: utf-8 -*-</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Created on Thu May 14 17:07:08 2026</span>
+<span class="sd"> </span>
+<span class="sd">@author: mihal</span>
+<span class="sd"> </span>
+<span class="sd">build_training_data.py</span>
+<span class="sd">======================</span>
+<span class="sd">Batch pipeline that converts raw sensor recordings (.npz) into compressed</span>
+<span class="sd">training samples for the AutoDNA driving-event classifier.</span>
+<span class="sd"> </span>
+<span class="sd">For every recording found in ``PARSED_DIR`` that has a matching label file in</span>
+<span class="sd">``LABELED_DIR``, the pipeline:</span>
+<span class="sd"> </span>
+<span class="sd">1. Loads and resamples multi-axis IMU data onto a common time grid.</span>
+<span class="sd">2. Pre-processes (low-pass filters) the signals.</span>
+<span class="sd">3. Selects STFT parameters suited to the recording length and sampling rate.</span>
+<span class="sd">4. Converts every sensor axis to an RGB spectrogram image.</span>
+<span class="sd">5. Computes per-window statistics (mean) for gyro Z, gyro Y, and accel X —</span>
+<span class="sd">   these preserve signal sign and magnitude for downstream direction / tilt</span>
+<span class="sd">   regression heads.</span>
+<span class="sd">6. Aligns the JSON event labels to the spectrogram time axis, producing a</span>
+<span class="sd">   dense (T × 7) label matrix.</span>
+<span class="sd">7. Writes everything to a single compressed ``.npz`` file under ``input_data/``.</span>
+<span class="sd"> </span>
+<span class="sd">Label column layout (axis 1 of the label matrix)</span>
+<span class="sd">-------------------------------------------------</span>
+<span class="sd">0 — ``is_turn``        binary flag: 1 if a turn event is active</span>
+<span class="sd">1 — ``turn_dir``       binary flag: 1 = right, 0 = left  (valid when col 0 = 1)</span>
+<span class="sd">2 — ``turn_angle``     normalised angle in [0, 1]  (clipped at MAX_ANGLE_TURN)</span>
+<span class="sd">3 — ``is_hill``        binary flag: 1 if a hill event is active</span>
+<span class="sd">4 — ``hill_dir``       binary flag: 1 = uphill, 0 = downhill (valid when col 3 = 1)</span>
+<span class="sd">5 — ``hill_angle``     normalised angle in [0, 1]  (clipped at MAX_ANGLE_HILL)</span>
+<span class="sd">6 — ``is_straight``    binary flag: 1 if the road segment is straight</span>
+<span class="sd">&quot;&quot;&quot;</span>
+ 
+<span class="kn">from</span><span class="w"> </span><span class="nn">AutoDNA.ai.spectrograms</span><span class="w"> </span><span class="kn">import</span> <span class="n">convert_all_sensors_to_spectrograms</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">AutoDNA.ai.demo_spectrograms</span><span class="w"> </span><span class="kn">import</span> <span class="n">choose_stft_parameters</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">AutoDNA.ai.preprocessing</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">load_sensor_data</span><span class="p">,</span>
+    <span class="n">estimate_sampling_rate</span><span class="p">,</span>
+    <span class="n">preprocess_sensor_data</span><span class="p">,</span>
+    <span class="n">resample_sensors_to_common_grid</span><span class="p">,</span>
+<span class="p">)</span>
+ 
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+
+<span class="n">BASE_DATA_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s1">&#39;../data/training_data&#39;</span><span class="p">)</span>
+<span class="n">PARSED_DIR</span> <span class="o">=</span> <span class="n">BASE_DATA_DIR</span> <span class="o">/</span> <span class="s1">&#39;parsed_data&#39;</span>
+<span class="n">LABELED_DIR</span> <span class="o">=</span> <span class="n">BASE_DATA_DIR</span> <span class="o">/</span> <span class="s1">&#39;labeled_data_json&#39;</span>
+<span class="n">LOG_FILES</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">PARSED_DIR</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s1">&#39;*.npz&#39;</span><span class="p">))</span>
+
+
+<span class="n">MAX_ANGLE_TURN</span> <span class="o">=</span> <span class="mf">100.0</span>
+<span class="c1">#Turn angles larger than this value are clipped to 1.0 in the label matrix</span>
+ 
+<span class="n">MAX_ANGLE_HILL</span> <span class="o">=</span> <span class="mf">15.0</span>
+<span class="c1">#Hill angles larger than this value are clipped to 1.0 in the label matrix</span>
+
+
+<span class="n">FILES_90_RIGHT_FLIP</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="mi">12</span><span class="p">))</span> <span class="o">|</span> <span class="nb">set</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">15</span><span class="p">,</span> <span class="mi">30</span><span class="p">))</span>        <span class="c1"># 5-11, 15-29</span>
+<span class="n">FILES_90_LEFT_FLIP</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">5</span><span class="p">))</span> <span class="o">|</span> <span class="nb">set</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">15</span><span class="p">))</span> <span class="o">|</span> <span class="nb">set</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">30</span><span class="p">,</span> <span class="mi">46</span><span class="p">))</span>  <span class="c1"># 1-4, 12-14, 30-45</span>
+
+
+<div class="viewcode-block" id="get_log_number">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.raw_to_inputs.get_log_number">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_log_number</span><span class="p">(</span><span class="n">npz_path</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract the numeric index from a log filename e.g. LOG005 -&gt; 5.&quot;&quot;&quot;</span>
+    <span class="n">stem</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">npz_path</span><span class="p">)</span><span class="o">.</span><span class="n">stem</span>  <span class="c1">#   &quot;LOG005&quot;</span>
+    <span class="n">digits</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">c</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">stem</span> <span class="k">if</span> <span class="n">c</span><span class="o">.</span><span class="n">isdigit</span><span class="p">())</span>
+    <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">digits</span><span class="p">)</span> <span class="k">if</span> <span class="n">digits</span> <span class="k">else</span> <span class="o">-</span><span class="mi">1</span></div>
+
+
+
+<div class="viewcode-block" id="swap_axes_90_right_flip">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.raw_to_inputs.swap_axes_90_right_flip">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">swap_axes_90_right_flip</span><span class="p">(</span><span class="n">sensors</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Correct axis orientation for files where sensor points to right window.</span>
+<span class="sd">    Sensor X points right, Y points forward — swap to standard (X=forward, Y=left).</span>
+<span class="sd">    </span>
+<span class="sd">    standard_x =  sensor_y</span>
+<span class="sd">    standard_y = -sensor_x</span>
+<span class="sd">    standard_z =  sensor_z  (unchanged)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">corrected</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">data</span> <span class="ow">in</span> <span class="n">sensors</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">corrected</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s1">&#39;ts&#39;</span><span class="p">:</span>  <span class="n">data</span><span class="p">[</span><span class="s1">&#39;ts&#39;</span><span class="p">],</span>
+            <span class="s1">&#39;x&#39;</span><span class="p">:</span>   <span class="n">data</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span>    <span class="c1"># new X = old Y (forward)</span>
+            <span class="s1">&#39;y&#39;</span><span class="p">:</span>  <span class="o">-</span><span class="n">data</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span>    <span class="c1"># new Y = -old X (left = -right)</span>
+            <span class="s1">&#39;z&#39;</span><span class="p">:</span>   <span class="n">data</span><span class="p">[</span><span class="s1">&#39;z&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span>
+        <span class="p">}</span>
+    <span class="k">return</span> <span class="n">corrected</span></div>
+
+
+
+<div class="viewcode-block" id="swap_axes_90_left_flip">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.raw_to_inputs.swap_axes_90_left_flip">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">swap_axes_90_left_flip</span><span class="p">(</span><span class="n">sensors</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Correct axis orientation for files where sensor points to left window.</span>
+<span class="sd">    Sensor X points left, Y points backward — swap to standard (X=forward, Y=left).</span>
+<span class="sd">    </span>
+<span class="sd">    standard_x = -sensor_y</span>
+<span class="sd">    standard_y =  sensor_x</span>
+<span class="sd">    standard_z =  sensor_z  (unchanged)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">corrected</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">data</span> <span class="ow">in</span> <span class="n">sensors</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">corrected</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s1">&#39;ts&#39;</span><span class="p">:</span>  <span class="n">data</span><span class="p">[</span><span class="s1">&#39;ts&#39;</span><span class="p">],</span>
+            <span class="s1">&#39;x&#39;</span><span class="p">:</span>  <span class="o">-</span><span class="n">data</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span>    <span class="c1"># new X = -old Y (forward = -backward)</span>
+            <span class="s1">&#39;y&#39;</span><span class="p">:</span>   <span class="n">data</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span>    <span class="c1"># new Y = old X (left)</span>
+            <span class="s1">&#39;z&#39;</span><span class="p">:</span>   <span class="n">data</span><span class="p">[</span><span class="s1">&#39;z&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span>
+        <span class="p">}</span>
+    <span class="k">return</span> <span class="n">corrected</span></div>
+
+
+
+<div class="viewcode-block" id="compute_pitch_angle_signal">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.raw_to_inputs.compute_pitch_angle_signal">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_pitch_angle_signal</span><span class="p">(</span><span class="n">accel_x</span><span class="p">,</span> <span class="n">accel_z</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute pitch angle with mounting offset removed.</span>
+<span class="sd">    Uses median of first 5 seconds as baseline (assumes car starts on flat road).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">raw_pitch</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">degrees</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">arctan2</span><span class="p">(</span><span class="o">-</span><span class="n">accel_x</span><span class="p">,</span> <span class="n">accel_z</span><span class="p">))</span>
+    
+    <span class="c1"># estimate mounting offset from first 2% of recording</span>
+    <span class="c1"># assumes recording starts on approximately flat road</span>
+    <span class="n">n_baseline</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">100</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">raw_pitch</span><span class="p">)</span> <span class="o">//</span> <span class="mi">50</span><span class="p">)</span>
+    <span class="n">baseline</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">median</span><span class="p">(</span><span class="n">raw_pitch</span><span class="p">[:</span><span class="n">n_baseline</span><span class="p">])</span>
+    
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Mounting offset: </span><span class="si">{</span><span class="n">baseline</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">°&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">raw_pitch</span> <span class="o">-</span> <span class="n">baseline</span></div>
+
+
+
+<div class="viewcode-block" id="save_training_sample">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.raw_to_inputs.save_training_sample">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">save_training_sample</span><span class="p">(</span><span class="n">npz_path</span><span class="p">,</span> <span class="n">converted</span><span class="p">,</span> <span class="n">labels</span><span class="p">,</span> <span class="n">processed</span><span class="p">,</span> <span class="n">nperseg</span><span class="p">,</span> <span class="n">noverlap</span><span class="p">,</span> <span class="n">output_dir</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Save one recording&#39;s spectrogram, per-window statistics, and labels as a</span>
+<span class="sd">    single compressed ``.npz`` file.</span>
+<span class="sd"> </span>
+<span class="sd">    The file written to *output_dir* contains the following arrays:</span>
+<span class="sd"> </span>
+<span class="sd">    * ``&lt;sensor&gt;_rgb``   — uint8 RGB spectrogram image for each sensor axis,</span>
+<span class="sd">      shape ``(H, W, 3)``.</span>
+<span class="sd">    * ``&lt;sensor&gt;_times`` — float32 centre times (s) of each STFT column,</span>
+<span class="sd">      shape ``(T,)``.</span>
+<span class="sd">    * ``&lt;sensor&gt;_freqs`` — float32 frequency bin centres (Hz),</span>
+<span class="sd">      shape ``(F,)``.</span>
+<span class="sd">    * ``gyro_z_mean_per_window``  — float32 raw gyro-Z mean per window,</span>
+<span class="sd">      shape ``(T,)``.  Sign is preserved so the model can infer turn direction.</span>
+<span class="sd">    * ``gyro_y_mean_per_window``  — float32 raw gyro-Y mean per window,</span>
+<span class="sd">      shape ``(T,)``.  Sign preserved for pitch direction.</span>
+<span class="sd">    * ``accel_x_mean_per_window`` — float32 raw accel-X mean per window,</span>
+<span class="sd">      shape ``(T,)``.  Sign preserved for forward/backward acceleration.</span>
+<span class="sd">    * ``labels`` — float32 dense label matrix, shape ``(T, 7)``.  See module</span>
+<span class="sd">      docstring for column definitions.</span>
+<span class="sd"> </span>
+<span class="sd">    :param npz_path: Path to the source recording ``.npz`` file.  Used only to</span>
+<span class="sd">        derive the output filename.</span>
+<span class="sd">    :type npz_path: str or pathlib.Path</span>
+<span class="sd">    :param converted: Mapping returned by</span>
+<span class="sd">        :func:`~AutoDNA.ai.spectrograms.convert_all_sensors_to_spectrograms`.</span>
+<span class="sd">        Keys are sensor names; values are dicts with keys</span>
+<span class="sd">        ``&#39;rgb_image&#39;``, ``&#39;times&#39;``, and ``&#39;frequencies&#39;``.</span>
+<span class="sd">    :type converted: dict[str, dict]</span>
+<span class="sd">    :param labels: List of label segment dicts loaded from the JSON label file.</span>
+<span class="sd">        Each dict must contain at minimum ``&#39;t_start&#39;`` and ``&#39;t_end&#39;`` keys,</span>
+<span class="sd">        plus optional ``&#39;straight&#39;``, ``&#39;turn&#39;``, and ``&#39;hill&#39;`` sub-dicts.</span>
+<span class="sd">    :type labels: list[dict]</span>
+<span class="sd">    :param processed: Pre-processed sensor data as returned by</span>
+<span class="sd">        :func:`~AutoDNA.ai.preprocessing.preprocess_sensor_data`.</span>
+<span class="sd">        Expected structure: ``{&#39;gyro&#39;: {&#39;x&#39;, &#39;y&#39;, &#39;z&#39;}, &#39;accel&#39;: {&#39;x&#39;, &#39;y&#39;, &#39;z&#39;}}``.</span>
+<span class="sd">    :type processed: dict[str, dict[str, numpy.ndarray]]</span>
+<span class="sd">    :param nperseg: STFT window length in samples (must match the value used</span>
+<span class="sd">        to produce *converted*).</span>
+<span class="sd">    :type nperseg: int</span>
+<span class="sd">    :param noverlap: Number of samples of overlap between consecutive STFT</span>
+<span class="sd">        windows (must match the value used to produce *converted*).</span>
+<span class="sd">    :type noverlap: int</span>
+<span class="sd">    :param output_dir: Directory where the ``.npz`` training file is written.</span>
+<span class="sd">        Created automatically if it does not exist.</span>
+<span class="sd">    :type output_dir: str or pathlib.Path</span>
+<span class="sd">    :returns: Path of the newly written ``.npz`` file.</span>
+<span class="sd">    :rtype: pathlib.Path</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">output_dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">output_dir</span><span class="p">)</span>
+    <span class="n">output_dir</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+ 
+    <span class="n">arrays</span> <span class="o">=</span> <span class="p">{}</span>
+ 
+    <span class="k">for</span> <span class="n">sensor_name</span><span class="p">,</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">converted</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">arrays</span><span class="p">[</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">sensor_name</span><span class="si">}</span><span class="s1">_rgb&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">result</span><span class="p">[</span><span class="s1">&#39;rgb_image&#39;</span><span class="p">]</span>
+        <span class="n">arrays</span><span class="p">[</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">sensor_name</span><span class="si">}</span><span class="s1">_times&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">result</span><span class="p">[</span><span class="s1">&#39;times&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">arrays</span><span class="p">[</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">sensor_name</span><span class="si">}</span><span class="s1">_freqs&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">result</span><span class="p">[</span><span class="s1">&#39;frequencies&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        
+        
+    <span class="n">gyro_z_signal</span> <span class="o">=</span> <span class="n">processed</span><span class="p">[</span><span class="s1">&#39;gyro&#39;</span><span class="p">][</span><span class="s1">&#39;z&#39;</span><span class="p">]</span>  
+    <span class="n">gyro_z_means</span> <span class="o">=</span> <span class="n">compute_mean_per_window</span><span class="p">(</span><span class="n">gyro_z_signal</span><span class="p">,</span> <span class="n">nperseg</span><span class="p">,</span> <span class="n">noverlap</span><span class="p">)</span>
+    <span class="n">arrays</span><span class="p">[</span><span class="s1">&#39;gyro_z_mean_per_window&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">gyro_z_means</span> 
+ 
+    <span class="n">gyro_y_signal</span> <span class="o">=</span> <span class="n">processed</span><span class="p">[</span><span class="s1">&#39;gyro&#39;</span><span class="p">][</span><span class="s1">&#39;y&#39;</span><span class="p">]</span>
+    <span class="n">gyro_y_means</span> <span class="o">=</span> <span class="n">compute_mean_per_window</span><span class="p">(</span><span class="n">gyro_y_signal</span><span class="p">,</span> <span class="n">nperseg</span><span class="p">,</span> <span class="n">noverlap</span><span class="p">)</span>
+    <span class="n">arrays</span><span class="p">[</span><span class="s1">&#39;gyro_y_mean_per_window&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">gyro_y_means</span>
+ 
+    <span class="n">acc_x_signal</span> <span class="o">=</span> <span class="n">processed</span><span class="p">[</span><span class="s1">&#39;accel&#39;</span><span class="p">][</span><span class="s1">&#39;x&#39;</span><span class="p">]</span>  
+    <span class="n">acc_x_means</span> <span class="o">=</span> <span class="n">compute_mean_per_window</span><span class="p">(</span><span class="n">acc_x_signal</span><span class="p">,</span> <span class="n">nperseg</span><span class="p">,</span> <span class="n">noverlap</span><span class="p">)</span>
+    <span class="n">arrays</span><span class="p">[</span><span class="s1">&#39;accel_x_mean_per_window&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">acc_x_means</span>  
+    
+    <span class="n">accel_x_raw</span> <span class="o">=</span> <span class="n">processed</span><span class="p">[</span><span class="s1">&#39;accel&#39;</span><span class="p">][</span><span class="s1">&#39;x&#39;</span><span class="p">]</span>
+    <span class="n">accel_z_raw</span> <span class="o">=</span> <span class="n">processed</span><span class="p">[</span><span class="s1">&#39;accel&#39;</span><span class="p">][</span><span class="s1">&#39;z&#39;</span><span class="p">]</span>
+    <span class="n">pitch_signal</span> <span class="o">=</span> <span class="n">compute_pitch_angle_signal</span><span class="p">(</span><span class="n">accel_x_raw</span><span class="p">,</span> <span class="n">accel_z_raw</span><span class="p">)</span>
+    <span class="n">pitch_means</span> <span class="o">=</span> <span class="n">compute_mean_per_window</span><span class="p">(</span><span class="n">pitch_signal</span><span class="p">,</span> <span class="n">nperseg</span><span class="p">,</span> <span class="n">noverlap</span><span class="p">)</span>
+    <span class="n">arrays</span><span class="p">[</span><span class="s1">&#39;pitch_angle_per_window&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">pitch_means</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+
+    <span class="n">first_sensor</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="nb">iter</span><span class="p">(</span><span class="n">converted</span><span class="o">.</span><span class="n">values</span><span class="p">()))</span>
+    <span class="n">times</span> <span class="o">=</span> <span class="n">first_sensor</span><span class="p">[</span><span class="s1">&#39;times&#39;</span><span class="p">]</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">labels_to_timeseries</span><span class="p">(</span><span class="n">labels</span><span class="p">,</span> <span class="n">times</span><span class="p">)</span>
+    <span class="n">arrays</span><span class="p">[</span><span class="s1">&#39;labels&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">y</span>
+ 
+    <span class="n">output_path</span> <span class="o">=</span> <span class="n">output_dir</span> <span class="o">/</span> <span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">npz_path</span><span class="p">)</span><span class="o">.</span><span class="n">stem</span> <span class="o">+</span> <span class="s1">&#39;_training.npz&#39;</span><span class="p">)</span>
+    <span class="n">np</span><span class="o">.</span><span class="n">savez_compressed</span><span class="p">(</span><span class="n">output_path</span><span class="p">,</span> <span class="o">**</span><span class="n">arrays</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Saved: </span><span class="si">{</span><span class="n">output_path</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">output_path</span></div>
+
+ 
+ 
+<div class="viewcode-block" id="labels_to_timeseries">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.raw_to_inputs.labels_to_timeseries">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">labels_to_timeseries</span><span class="p">(</span><span class="n">labels</span><span class="p">,</span> <span class="n">times</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert a list of labelled event segments into a dense per-column label</span>
+<span class="sd">    matrix aligned to the spectrogram time axis.</span>
+<span class="sd"> </span>
+<span class="sd">    Each segment in *labels* contributes to every spectrogram column whose</span>
+<span class="sd">    centre time falls within ``[t_start, t_end]`` (inclusive).  Overlapping</span>
+<span class="sd">    segments are supported: later segments in the list simply overwrite earlier</span>
+<span class="sd">    ones for the overlapping columns.</span>
+<span class="sd"> </span>
+<span class="sd">    :param labels: List of segment dicts.  Recognised keys per segment:</span>
+<span class="sd"> </span>
+<span class="sd">        * ``t_start`` *(float, required)* — segment start time in seconds.</span>
+<span class="sd">        * ``t_end``   *(float, required)* — segment end time in seconds.</span>
+<span class="sd">        * ``straight`` *(any truthy value, optional)* — marks a straight</span>
+<span class="sd">          road section; sets column 6 to ``1.0``.</span>
+<span class="sd">        * ``turn`` *(dict, optional)* — turn event with sub-keys:</span>
+<span class="sd"> </span>
+<span class="sd">          * ``dir``      *(str)* — ``&#39;right&#39;`` or ``&#39;left&#39;``.</span>
+<span class="sd">          * ``angleDeg`` *(float)* — unsigned turn angle in degrees.</span>
+<span class="sd"> </span>
+<span class="sd">        * ``hill`` *(dict, optional)* — hill event with sub-keys:</span>
+<span class="sd"> </span>
+<span class="sd">          * ``dir``      *(str)* — ``&#39;up&#39;`` or ``&#39;down&#39;``.</span>
+<span class="sd">          * ``angleDeg`` *(float)* — unsigned hill angle in degrees.</span>
+<span class="sd"> </span>
+<span class="sd">    :type labels: list[dict]</span>
+<span class="sd">    :param times: 1-D array of STFT column centre times (seconds), shape</span>
+<span class="sd">        ``(T,)``.</span>
+<span class="sd">    :type times: numpy.ndarray</span>
+<span class="sd">    :returns: Float32 label matrix of shape ``(T, 7)``.  See module docstring</span>
+<span class="sd">        for column definitions.</span>
+<span class="sd">    :rtype: numpy.ndarray</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">T</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">times</span><span class="p">)</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">T</span><span class="p">,</span> <span class="mi">7</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+ 
+    <span class="k">for</span> <span class="n">seg</span> <span class="ow">in</span> <span class="n">labels</span><span class="p">:</span>
+        <span class="n">t0</span><span class="p">,</span> <span class="n">t1</span> <span class="o">=</span> <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;t_start&#39;</span><span class="p">],</span> <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;t_end&#39;</span><span class="p">]</span>
+        <span class="n">mask</span> <span class="o">=</span> <span class="p">(</span><span class="n">times</span> <span class="o">&gt;=</span> <span class="n">t0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">times</span> <span class="o">&lt;=</span> <span class="n">t1</span><span class="p">)</span>
+ 
+        <span class="k">if</span> <span class="n">seg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;straight&#39;</span><span class="p">):</span>
+            <span class="n">y</span><span class="p">[</span><span class="n">mask</span><span class="p">,</span> <span class="mi">6</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.0</span>
+ 
+        <span class="k">if</span> <span class="n">seg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;turn&#39;</span><span class="p">):</span>
+            <span class="n">y</span><span class="p">[</span><span class="n">mask</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.0</span>
+            <span class="n">y</span><span class="p">[</span><span class="n">mask</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;turn&#39;</span><span class="p">][</span><span class="s1">&#39;dir&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;right&#39;</span> <span class="k">else</span> <span class="mf">0.0</span>
+            <span class="n">y</span><span class="p">[</span><span class="n">mask</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">seg</span><span class="p">[</span><span class="s1">&#39;turn&#39;</span><span class="p">][</span><span class="s1">&#39;angleDeg&#39;</span><span class="p">]</span> <span class="o">/</span> <span class="n">MAX_ANGLE_TURN</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+ 
+        <span class="k">if</span> <span class="n">seg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;hill&#39;</span><span class="p">):</span>
+            <span class="n">y</span><span class="p">[</span><span class="n">mask</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.0</span>
+            <span class="n">y</span><span class="p">[</span><span class="n">mask</span><span class="p">,</span> <span class="mi">4</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;hill&#39;</span><span class="p">][</span><span class="s1">&#39;dir&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;up&#39;</span> <span class="k">else</span> <span class="mf">0.0</span>
+            <span class="n">y</span><span class="p">[</span><span class="n">mask</span><span class="p">,</span> <span class="mi">5</span><span class="p">]</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">seg</span><span class="p">[</span><span class="s1">&#39;hill&#39;</span><span class="p">][</span><span class="s1">&#39;angleDeg&#39;</span><span class="p">]</span> <span class="o">/</span> <span class="n">MAX_ANGLE_HILL</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+ 
+    <span class="k">return</span> <span class="n">y</span></div>
+
+ 
+ 
+<div class="viewcode-block" id="compute_mean_per_window">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.raw_to_inputs.compute_mean_per_window">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_mean_per_window</span><span class="p">(</span><span class="n">gyro_z_signal</span><span class="p">,</span> <span class="n">nperseg</span><span class="p">,</span> <span class="n">noverlap</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the arithmetic mean of a signal within each STFT window.</span>
+<span class="sd"> </span>
+<span class="sd">    The windowing scheme mirrors the one used by</span>
+<span class="sd">    :func:`scipy.signal.stft` / the project&#39;s spectrogram conversion so that</span>
+<span class="sd">    the returned array is index-aligned with the spectrogram time axis.</span>
+<span class="sd"> </span>
+<span class="sd">    Sign is deliberately *not* rectified: positive values indicate one</span>
+<span class="sd">    physical direction and negative values the opposite, which is necessary</span>
+<span class="sd">    for the model&#39;s direction regression heads (e.g. left vs. right turn,</span>
+<span class="sd">    uphill vs. downhill).</span>
+<span class="sd"> </span>
+<span class="sd">    .. note::</span>
+<span class="sd">        Trailing samples that do not fill a complete window of length</span>
+<span class="sd">        *nperseg* are silently discarded, consistent with ``scipy.signal.stft``</span>
+<span class="sd">        default behaviour (``boundary=None``).</span>
+<span class="sd"> </span>
+<span class="sd">    :param gyro_z_signal: 1-D array of pre-processed sensor samples.</span>
+<span class="sd">        Although the parameter is named ``gyro_z_signal`` for historical</span>
+<span class="sd">        reasons, the function is axis-agnostic and can be used with any</span>
+<span class="sd">        1-D signal (gyro Y, accel X, etc.).</span>
+<span class="sd">    :type gyro_z_signal: numpy.ndarray</span>
+<span class="sd">    :param nperseg: STFT window length in samples.</span>
+<span class="sd">    :type nperseg: int</span>
+<span class="sd">    :param noverlap: Number of overlapping samples between consecutive</span>
+<span class="sd">        windows.  The hop size is ``nperseg - noverlap``.</span>
+<span class="sd">    :type noverlap: int</span>
+<span class="sd">    :returns: Float32 array of per-window means, shape ``(T,)`` where *T* is</span>
+<span class="sd">        the number of complete windows.</span>
+<span class="sd">    :rtype: numpy.ndarray</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">step</span> <span class="o">=</span> <span class="n">nperseg</span> <span class="o">-</span> <span class="n">noverlap</span>
+    <span class="n">means</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">gyro_z_signal</span><span class="p">)</span> <span class="o">-</span> <span class="n">nperseg</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">step</span><span class="p">):</span>
+        <span class="n">window</span> <span class="o">=</span> <span class="n">gyro_z_signal</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span> <span class="o">+</span> <span class="n">nperseg</span><span class="p">]</span>
+        <span class="n">means</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">window</span><span class="o">.</span><span class="n">mean</span><span class="p">())</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">means</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="plot_axis_correction">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.raw_to_inputs.plot_axis_correction">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">plot_axis_correction</span><span class="p">(</span><span class="n">parsed_dir</span><span class="p">,</span> <span class="n">my_file_num</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">teammate_file_num</span><span class="o">=</span><span class="mi">3</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Plot gyro and accel X/Y/Z before and after axis correction</span>
+<span class="sd">    for one file from each device to verify the swap is correct.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">load_and_swap</span><span class="p">(</span><span class="n">log_num</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Load recording *log_num* and apply its device-specific axis correction.&quot;&quot;&quot;</span>
+        <span class="c1"># find the file</span>
+        <span class="n">matches</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">parsed_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;*</span><span class="si">{</span><span class="n">log_num</span><span class="si">:</span><span class="s1">03d</span><span class="si">}</span><span class="s1">*.npz&#39;</span><span class="p">))</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">matches</span><span class="p">:</span>
+            <span class="n">matches</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">parsed_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;*</span><span class="si">{</span><span class="n">log_num</span><span class="si">}</span><span class="s1">*.npz&#39;</span><span class="p">))</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">matches</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;File LOG</span><span class="si">{</span><span class="n">log_num</span><span class="si">:</span><span class="s2">03d</span><span class="si">}</span><span class="s2"> not found&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span>
+        
+        <span class="n">path</span> <span class="o">=</span> <span class="n">matches</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">sensors</span> <span class="o">=</span> <span class="n">load_sensor_data</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+        <span class="n">sensors</span> <span class="o">=</span> <span class="n">resample_sensors_to_common_grid</span><span class="p">(</span><span class="n">sensors</span><span class="p">)</span>
+        <span class="n">raw</span> <span class="o">=</span> <span class="p">{</span><span class="n">name</span><span class="p">:</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">data</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span> 
+               <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">data</span> <span class="ow">in</span> <span class="n">sensors</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+
+        <span class="k">if</span> <span class="n">log_num</span> <span class="ow">in</span> <span class="n">FILES_90_RIGHT_FLIP</span><span class="p">:</span>
+            <span class="n">corrected</span> <span class="o">=</span> <span class="n">swap_axes_90_right_flip</span><span class="p">(</span><span class="n">sensors</span><span class="p">)</span>
+            <span class="n">label</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;LOG</span><span class="si">{</span><span class="n">log_num</span><span class="si">:</span><span class="s1">03d</span><span class="si">}</span><span class="s1"> (mine)&#39;</span>
+        <span class="k">elif</span> <span class="n">log_num</span> <span class="ow">in</span> <span class="n">FILES_90_LEFT_FLIP</span><span class="p">:</span>
+            <span class="n">corrected</span> <span class="o">=</span> <span class="n">swap_axes_90_left_flip</span><span class="p">(</span><span class="n">sensors</span><span class="p">)</span>
+            <span class="n">label</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;LOG</span><span class="si">{</span><span class="n">log_num</span><span class="si">:</span><span class="s1">03d</span><span class="si">}</span><span class="s1"> (teammate)&#39;</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">corrected</span> <span class="o">=</span> <span class="n">sensors</span>
+            <span class="n">label</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;LOG</span><span class="si">{</span><span class="n">log_num</span><span class="si">:</span><span class="s1">03d</span><span class="si">}</span><span class="s1"> (unknown)&#39;</span>
+
+        <span class="k">return</span> <span class="n">raw</span><span class="p">,</span> <span class="n">corrected</span><span class="p">,</span> <span class="n">label</span>
+
+    <span class="n">fig</span><span class="p">,</span> <span class="n">axes</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">20</span><span class="p">,</span> <span class="mi">18</span><span class="p">))</span>
+    <span class="n">fig</span><span class="o">.</span><span class="n">suptitle</span><span class="p">(</span><span class="s1">&#39;Axis correction verification — gyro and accel X/Y/Z&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">14</span><span class="p">)</span>
+
+    <span class="n">sensor_pairs</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="p">(</span><span class="s1">&#39;gyro&#39;</span><span class="p">,</span>  <span class="s1">&#39;x&#39;</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;gyro&#39;</span><span class="p">,</span>  <span class="s1">&#39;y&#39;</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;gyro&#39;</span><span class="p">,</span>  <span class="s1">&#39;z&#39;</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>
+        <span class="p">(</span><span class="s1">&#39;accel&#39;</span><span class="p">,</span> <span class="s1">&#39;x&#39;</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;accel&#39;</span><span class="p">,</span> <span class="s1">&#39;y&#39;</span><span class="p">,</span> <span class="mi">4</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;accel&#39;</span><span class="p">,</span> <span class="s1">&#39;z&#39;</span><span class="p">,</span> <span class="mi">5</span><span class="p">),</span>
+    <span class="p">]</span>
+
+    <span class="k">for</span> <span class="n">file_num</span><span class="p">,</span> <span class="n">col_offset</span> <span class="ow">in</span> <span class="p">[(</span><span class="n">my_file_num</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="p">(</span><span class="n">teammate_file_num</span><span class="p">,</span> <span class="mi">2</span><span class="p">)]:</span>
+        <span class="n">raw</span><span class="p">,</span> <span class="n">corrected</span><span class="p">,</span> <span class="n">file_label</span> <span class="o">=</span> <span class="n">load_and_swap</span><span class="p">(</span><span class="n">file_num</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">raw</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="k">for</span> <span class="n">sensor_name</span><span class="p">,</span> <span class="n">axis</span><span class="p">,</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">sensor_pairs</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">sensor_name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">raw</span><span class="p">:</span>
+                <span class="k">continue</span>
+
+            <span class="n">ts</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">][</span><span class="s1">&#39;ts&#39;</span><span class="p">]</span>
+            <span class="n">ts</span> <span class="o">=</span> <span class="p">(</span><span class="n">ts</span> <span class="o">-</span> <span class="n">ts</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">/</span> <span class="mf">1000.0</span>  <span class="c1"># to seconds</span>
+
+            <span class="n">raw_signal</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">][</span><span class="n">axis</span><span class="p">]</span>
+            <span class="n">cor_signal</span> <span class="o">=</span> <span class="n">corrected</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">][</span><span class="n">axis</span><span class="p">]</span>
+
+            <span class="c1"># before</span>
+            <span class="n">ax</span> <span class="o">=</span> <span class="n">axes</span><span class="p">[</span><span class="n">row</span><span class="p">][</span><span class="n">col_offset</span><span class="p">]</span>
+            <span class="n">ax</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">raw_signal</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.8</span><span class="p">)</span>
+            <span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">file_label</span><span class="si">}</span><span class="se">\n</span><span class="si">{</span><span class="n">sensor_name</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span><span class="si">}</span><span class="s1"> </span><span class="si">{</span><span class="n">axis</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span><span class="si">}</span><span class="s1"> — BEFORE&#39;</span><span class="p">)</span>
+            <span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;amplitude&#39;</span><span class="p">)</span>
+            <span class="n">ax</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+
+            <span class="c1"># after</span>
+            <span class="n">ax</span> <span class="o">=</span> <span class="n">axes</span><span class="p">[</span><span class="n">row</span><span class="p">][</span><span class="n">col_offset</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+            <span class="n">ax</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">cor_signal</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;orange&#39;</span><span class="p">)</span>
+            <span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">file_label</span><span class="si">}</span><span class="se">\n</span><span class="si">{</span><span class="n">sensor_name</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span><span class="si">}</span><span class="s1"> </span><span class="si">{</span><span class="n">axis</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span><span class="si">}</span><span class="s1"> — AFTER&#39;</span><span class="p">)</span>
+            <span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;amplitude&#39;</span><span class="p">)</span>
+            <span class="n">ax</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">ax</span> <span class="ow">in</span> <span class="n">axes</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>
+        <span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s1">&#39;time (s)&#39;</span><span class="p">)</span>
+
+    <span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">savefig</span><span class="p">(</span><span class="s1">&#39;axis_correction_check.png&#39;</span><span class="p">,</span> <span class="n">dpi</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Saved: axis_correction_check.png&quot;</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="plot_pitch_vs_labels">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.raw_to_inputs.plot_pitch_vs_labels">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">plot_pitch_vs_labels</span><span class="p">(</span><span class="n">parsed_dir</span><span class="p">,</span> <span class="n">label_dir</span><span class="p">,</span> <span class="n">log_num</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Plot computed pitch angle alongside hill labels to verify correctness.</span>
+<span class="sd">    Uphill regions should show positive pitch, downhill negative.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+
+    <span class="n">matches</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">parsed_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;*</span><span class="si">{</span><span class="n">log_num</span><span class="si">:</span><span class="s1">03d</span><span class="si">}</span><span class="s1">*.npz&#39;</span><span class="p">))</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">matches</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;File LOG</span><span class="si">{</span><span class="n">log_num</span><span class="si">:</span><span class="s2">03d</span><span class="si">}</span><span class="s2"> not found&quot;</span><span class="p">)</span>
+        <span class="k">return</span>
+
+    <span class="n">sensors</span> <span class="o">=</span> <span class="n">load_sensor_data</span><span class="p">(</span><span class="n">matches</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    <span class="n">sensors</span> <span class="o">=</span> <span class="n">resample_sensors_to_common_grid</span><span class="p">(</span><span class="n">sensors</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">log_num</span> <span class="ow">in</span> <span class="n">FILES_90_RIGHT_FLIP</span><span class="p">:</span>
+        <span class="n">sensors</span> <span class="o">=</span> <span class="n">swap_axes_90_right_flip</span><span class="p">(</span><span class="n">sensors</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">log_num</span> <span class="ow">in</span> <span class="n">FILES_90_LEFT_FLIP</span><span class="p">:</span>
+        <span class="n">sensors</span> <span class="o">=</span> <span class="n">swap_axes_90_left_flip</span><span class="p">(</span><span class="n">sensors</span><span class="p">)</span>
+
+    <span class="n">accel</span> <span class="o">=</span> <span class="n">sensors</span><span class="p">[</span><span class="s1">&#39;accel&#39;</span><span class="p">]</span>
+    <span class="n">ts</span> <span class="o">=</span> <span class="p">(</span><span class="n">accel</span><span class="p">[</span><span class="s1">&#39;ts&#39;</span><span class="p">]</span> <span class="o">-</span> <span class="n">accel</span><span class="p">[</span><span class="s1">&#39;ts&#39;</span><span class="p">][</span><span class="mi">0</span><span class="p">])</span> <span class="o">/</span> <span class="mf">1000.0</span>  <span class="c1"># seconds</span>
+
+    <span class="n">pitch</span> <span class="o">=</span> <span class="n">compute_pitch_angle_signal</span><span class="p">(</span><span class="n">accel</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">],</span> <span class="n">accel</span><span class="p">[</span><span class="s1">&#39;z&#39;</span><span class="p">])</span>
+    
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;pitch stats: min=</span><span class="si">{</span><span class="n">pitch</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  max=</span><span class="si">{</span><span class="n">pitch</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  mean=</span><span class="si">{</span><span class="n">pitch</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;accel_x stats: min=</span><span class="si">{</span><span class="n">accel</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">  max=</span><span class="si">{</span><span class="n">accel</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">  mean=</span><span class="si">{</span><span class="n">accel</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;accel_z stats: min=</span><span class="si">{</span><span class="n">accel</span><span class="p">[</span><span class="s1">&#39;z&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">  max=</span><span class="si">{</span><span class="n">accel</span><span class="p">[</span><span class="s1">&#39;z&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">  mean=</span><span class="si">{</span><span class="n">accel</span><span class="p">[</span><span class="s1">&#39;z&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">label_path</span> <span class="o">=</span> <span class="n">label_dir</span> <span class="o">/</span> <span class="sa">f</span><span class="s1">&#39;LOG</span><span class="si">{</span><span class="n">log_num</span><span class="si">:</span><span class="s1">03d</span><span class="si">}</span><span class="s1">_labels.json&#39;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">label_path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Labels not found for LOG</span><span class="si">{</span><span class="n">log_num</span><span class="si">:</span><span class="s2">03d</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span>
+
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">label_path</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">labels</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)[</span><span class="s1">&#39;labels&#39;</span><span class="p">]</span>
+
+    <span class="n">fig</span><span class="p">,</span> <span class="n">axes</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">16</span><span class="p">,</span> <span class="mi">10</span><span class="p">),</span> <span class="n">sharex</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">fig</span><span class="o">.</span><span class="n">suptitle</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;LOG</span><span class="si">{</span><span class="n">log_num</span><span class="si">:</span><span class="s1">03d</span><span class="si">}</span><span class="s1"> — pitch angle vs hill labels&#39;</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">13</span><span class="p">)</span>
+
+    <span class="c1"># plot 1: raw accel x and z for reference</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">accel</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">],</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;accel X (forward)&#39;</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.8</span><span class="p">)</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">accel</span><span class="p">[</span><span class="s1">&#39;z&#39;</span><span class="p">],</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;accel Z (vertical)&#39;</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.8</span><span class="p">)</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">axhline</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span>    <span class="n">color</span><span class="o">=</span><span class="s1">&#39;gray&#39;</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">linestyle</span><span class="o">=</span><span class="s1">&#39;--&#39;</span><span class="p">)</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">axhline</span><span class="p">(</span><span class="mi">1000</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;green&#39;</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> <span class="n">linestyle</span><span class="o">=</span><span class="s1">&#39;--&#39;</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;expected 1g&#39;</span><span class="p">)</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;mg (raw)&#39;</span><span class="p">)</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">fontsize</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># plot 2: computed pitch angle</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">pitch</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.6</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;purple&#39;</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;pitch angle (°)&#39;</span><span class="p">)</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">axhline</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;gray&#39;</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">linestyle</span><span class="o">=</span><span class="s1">&#39;--&#39;</span><span class="p">)</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">axhline</span><span class="p">(</span> <span class="mf">1.5</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;orange&#39;</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> <span class="n">linestyle</span><span class="o">=</span><span class="s1">&#39;--&#39;</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;threshold ±1.5°&#39;</span><span class="p">)</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">axhline</span><span class="p">(</span><span class="o">-</span><span class="mf">1.5</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;orange&#39;</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> <span class="n">linestyle</span><span class="o">=</span><span class="s1">&#39;--&#39;</span><span class="p">)</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;pitch (degrees)&#39;</span><span class="p">)</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">set_ylim</span><span class="p">(</span><span class="o">-</span><span class="mi">20</span><span class="p">,</span> <span class="mi">20</span><span class="p">)</span>  <span class="c1"># expected range for normal roads</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">fontsize</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># plot 3: pitch angle with hill label shading</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">pitch</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.6</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;purple&#39;</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;pitch angle (°)&#39;</span><span class="p">)</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">axhline</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;gray&#39;</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">linestyle</span><span class="o">=</span><span class="s1">&#39;--&#39;</span><span class="p">)</span>
+
+    <span class="n">legend_added</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">seg</span> <span class="ow">in</span> <span class="n">labels</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">seg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;hill&#39;</span><span class="p">):</span>
+            <span class="n">color</span> <span class="o">=</span> <span class="s1">&#39;red&#39;</span> <span class="k">if</span> <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;hill&#39;</span><span class="p">][</span><span class="s1">&#39;dir&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;up&#39;</span> <span class="k">else</span> <span class="s1">&#39;blue&#39;</span>
+            <span class="n">label_str</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;hill </span><span class="si">{</span><span class="n">seg</span><span class="p">[</span><span class="s1">&#39;hill&#39;</span><span class="p">][</span><span class="s1">&#39;dir&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="n">axes</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">axvspan</span><span class="p">(</span>
+                <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;t_start&#39;</span><span class="p">],</span> <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;t_end&#39;</span><span class="p">],</span>
+                <span class="n">alpha</span><span class="o">=</span><span class="mf">0.25</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="n">color</span><span class="p">,</span>
+                <span class="n">label</span><span class="o">=</span><span class="n">label_str</span> <span class="k">if</span> <span class="n">label_str</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">legend_added</span> <span class="k">else</span> <span class="s1">&#39;&#39;</span>
+            <span class="p">)</span>
+            <span class="n">legend_added</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">label_str</span><span class="p">)</span>
+
+    <span class="n">axes</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s1">&#39;pitch (degrees)&#39;</span><span class="p">)</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">set_ylim</span><span class="p">(</span><span class="o">-</span><span class="mi">20</span><span class="p">,</span> <span class="mi">20</span><span class="p">)</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s1">&#39;time (s)&#39;</span><span class="p">)</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">fontsize</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+    <span class="n">axes</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">savefig</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;pitch_check_LOG</span><span class="si">{</span><span class="n">log_num</span><span class="si">:</span><span class="s1">03d</span><span class="si">}</span><span class="s1">.png&#39;</span><span class="p">,</span> <span class="n">dpi</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+    <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Saved: pitch_check_LOG</span><span class="si">{</span><span class="n">log_num</span><span class="si">:</span><span class="s2">03d</span><span class="si">}</span><span class="s2">.png&quot;</span><span class="p">)</span>
+
+    <span class="c1"># print statistics per labeled hill segment</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Pitch statistics per hill segment:&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">seg</span> <span class="ow">in</span> <span class="n">labels</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">seg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;hill&#39;</span><span class="p">):</span>
+            <span class="n">t0</span><span class="p">,</span> <span class="n">t1</span> <span class="o">=</span> <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;t_start&#39;</span><span class="p">],</span> <span class="n">seg</span><span class="p">[</span><span class="s1">&#39;t_end&#39;</span><span class="p">]</span>
+            <span class="n">mask</span> <span class="o">=</span> <span class="p">(</span><span class="n">ts</span> <span class="o">&gt;=</span> <span class="n">t0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">ts</span> <span class="o">&lt;=</span> <span class="n">t1</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">mask</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+                <span class="n">seg_pitch</span> <span class="o">=</span> <span class="n">pitch</span><span class="p">[</span><span class="n">mask</span><span class="p">]</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  t=</span><span class="si">{</span><span class="n">t0</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">-</span><span class="si">{</span><span class="n">t1</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">s  dir=</span><span class="si">{</span><span class="n">seg</span><span class="p">[</span><span class="s1">&#39;hill&#39;</span><span class="p">][</span><span class="s1">&#39;dir&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">4s</span><span class="si">}</span><span class="s2">  &quot;</span>
+                      <span class="sa">f</span><span class="s2">&quot;angle=</span><span class="si">{</span><span class="n">seg</span><span class="p">[</span><span class="s1">&#39;hill&#39;</span><span class="p">][</span><span class="s1">&#39;angleDeg&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">°  &quot;</span>
+                      <span class="sa">f</span><span class="s2">&quot;pitch_mean=</span><span class="si">{</span><span class="n">seg_pitch</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">°  &quot;</span>
+                      <span class="sa">f</span><span class="s2">&quot;pitch_std=</span><span class="si">{</span><span class="n">seg_pitch</span><span class="o">.</span><span class="n">std</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">°  &quot;</span>
+                      <span class="sa">f</span><span class="s2">&quot;pitch_range=[</span><span class="si">{</span><span class="n">seg_pitch</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">seg_pitch</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">]&quot;</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="sanity_check_sensors">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.raw_to_inputs.sanity_check_sensors">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">sanity_check_sensors</span><span class="p">(</span><span class="n">parsed_dir</span><span class="p">,</span> <span class="n">log_num</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Print statistics for a file to verify sensor readings make sense.</span>
+<span class="sd">    At rest: accel_z ≈ ±1000mg, accel_x/y ≈ 0, gyro_x/y/z ≈ 0</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+    
+    <span class="n">matches</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">parsed_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;*</span><span class="si">{</span><span class="n">log_num</span><span class="si">:</span><span class="s1">03d</span><span class="si">}</span><span class="s1">*.npz&#39;</span><span class="p">))</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">matches</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;File not found: LOG</span><span class="si">{</span><span class="n">log_num</span><span class="si">:</span><span class="s2">03d</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span>
+    
+    <span class="n">sensors</span> <span class="o">=</span> <span class="n">load_sensor_data</span><span class="p">(</span><span class="n">matches</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    <span class="n">sensors</span> <span class="o">=</span> <span class="n">resample_sensors_to_common_grid</span><span class="p">(</span><span class="n">sensors</span><span class="p">)</span>
+    
+
+    <span class="k">if</span> <span class="n">log_num</span> <span class="ow">in</span> <span class="n">FILES_90_RIGHT_FLIP</span><span class="p">:</span>
+        <span class="n">sensors</span> <span class="o">=</span> <span class="n">swap_axes_90_right_flip</span><span class="p">(</span><span class="n">sensors</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">log_num</span> <span class="ow">in</span> <span class="n">FILES_90_LEFT_FLIP</span><span class="p">:</span>
+        <span class="n">sensors</span> <span class="o">=</span> <span class="n">swap_axes_90_left_flip</span><span class="p">(</span><span class="n">sensors</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">sensor_name</span> <span class="ow">in</span> <span class="p">[</span><span class="s1">&#39;accel&#39;</span><span class="p">,</span> <span class="s1">&#39;gyro&#39;</span><span class="p">]:</span>
+        <span class="k">if</span> <span class="n">sensor_name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">sensors</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">d</span> <span class="o">=</span> <span class="n">sensors</span><span class="p">[</span><span class="n">sensor_name</span><span class="p">]</span>
+        <span class="n">ts</span> <span class="o">=</span> <span class="p">(</span><span class="n">d</span><span class="p">[</span><span class="s1">&#39;ts&#39;</span><span class="p">]</span> <span class="o">-</span> <span class="n">d</span><span class="p">[</span><span class="s1">&#39;ts&#39;</span><span class="p">][</span><span class="mi">0</span><span class="p">])</span> <span class="o">/</span> <span class="mf">1000.0</span>
+        
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="si">{</span><span class="n">sensor_name</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span><span class="si">}</span><span class="s2"> statistics:&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">axis</span> <span class="ow">in</span> <span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">,</span> <span class="s1">&#39;y&#39;</span><span class="p">,</span> <span class="s1">&#39;z&#39;</span><span class="p">]:</span>
+            <span class="n">sig</span> <span class="o">=</span> <span class="n">d</span><span class="p">[</span><span class="n">axis</span><span class="p">]</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">axis</span><span class="si">}</span><span class="s2">: mean=</span><span class="si">{</span><span class="n">sig</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">  std=</span><span class="si">{</span><span class="n">sig</span><span class="o">.</span><span class="n">std</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">  &quot;</span>
+                  <span class="sa">f</span><span class="s2">&quot;min=</span><span class="si">{</span><span class="n">sig</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">  max=</span><span class="si">{</span><span class="n">sig</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        
+        <span class="c1"># plot all 3 axes</span>
+        <span class="n">fig</span><span class="p">,</span> <span class="n">axes</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">14</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span> <span class="n">sharex</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">fig</span><span class="o">.</span><span class="n">suptitle</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;LOG</span><span class="si">{</span><span class="n">log_num</span><span class="si">:</span><span class="s1">03d</span><span class="si">}</span><span class="s1"> — </span><span class="si">{</span><span class="n">sensor_name</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span><span class="si">}</span><span class="s1"> (after axis correction)&#39;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">axis</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">([</span><span class="s1">&#39;x&#39;</span><span class="p">,</span> <span class="s1">&#39;y&#39;</span><span class="p">,</span> <span class="s1">&#39;z&#39;</span><span class="p">]):</span>
+            <span class="n">axes</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">d</span><span class="p">[</span><span class="n">axis</span><span class="p">],</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.6</span><span class="p">)</span>
+            <span class="n">axes</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">axis</span><span class="si">}</span><span class="s1"> (raw)&#39;</span><span class="p">)</span>
+            <span class="n">axes</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">axhline</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;red&#39;</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">linestyle</span><span class="o">=</span><span class="s1">&#39;--&#39;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">sensor_name</span> <span class="o">==</span> <span class="s1">&#39;accel&#39;</span> <span class="ow">and</span> <span class="n">axis</span> <span class="o">==</span> <span class="s1">&#39;z&#39;</span><span class="p">:</span>
+                <span class="n">axes</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">axhline</span><span class="p">(</span><span class="mi">1000</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;green&#39;</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> 
+                               <span class="n">linestyle</span><span class="o">=</span><span class="s1">&#39;--&#39;</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;expected 1g&#39;</span><span class="p">)</span>
+                <span class="n">axes</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">axhline</span><span class="p">(</span><span class="o">-</span><span class="mi">1000</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s1">&#39;green&#39;</span><span class="p">,</span> <span class="n">linewidth</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> <span class="n">linestyle</span><span class="o">=</span><span class="s1">&#39;--&#39;</span><span class="p">)</span>
+                <span class="n">axes</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">legend</span><span class="p">()</span>
+        <span class="n">axes</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s1">&#39;time (s)&#39;</span><span class="p">)</span>
+        <span class="n">plt</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">()</span>
+        <span class="n">plt</span><span class="o">.</span><span class="n">savefig</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;sanity_LOG</span><span class="si">{</span><span class="n">log_num</span><span class="si">:</span><span class="s1">03d</span><span class="si">}</span><span class="s1">_</span><span class="si">{</span><span class="n">sensor_name</span><span class="si">}</span><span class="s1">.png&#39;</span><span class="p">,</span> <span class="n">dpi</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+        <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span></div>
+
+
+
+
+<div class="viewcode-block" id="main">
+<a class="viewcode-back" href="../../../ai.html#AutoDNA.ai.raw_to_inputs.main">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Run axis-correction and sensor sanity plots, then export training samples.</span>
+
+<span class="sd">    The verification plots run first; the export loop over ``LOG_FILES`` (below)</span>
+<span class="sd">    resamples, preprocesses, and writes one ``.npz`` training sample per</span>
+<span class="sd">    recording via :func:`save_training_sample`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">plot_axis_correction</span><span class="p">(</span><span class="n">PARSED_DIR</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+    <span class="n">sanity_check_sensors</span><span class="p">(</span><span class="n">PARSED_DIR</span><span class="p">,</span> <span class="n">log_num</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>   <span class="c1"># one of yours</span>
+    <span class="n">sanity_check_sensors</span><span class="p">(</span><span class="n">PARSED_DIR</span><span class="p">,</span> <span class="n">log_num</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>    <span class="c1"># teammate&#39;s</span>
+
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Process all recordings found in ``PARSED_DIR`` and write training</span>
+<span class="sd">    samples to ``input_data/``.</span>
+<span class="sd"> </span>
+<span class="sd">    For each ``.npz`` file in ``LOG_FILES`` the function:</span>
+<span class="sd"> </span>
+<span class="sd">    1. Looks for a matching label file in ``LABELED_DIR``; skips the recording</span>
+<span class="sd">       with a warning if none is found.</span>
+<span class="sd">    2. Applies conversion into standard orientation depending on teammate A or teammate B recording</span>
+<span class="sd">    3. Loads, resamples, and pre-processes the IMU sensor data.</span>
+<span class="sd">    4. Selects STFT parameters via</span>
+<span class="sd">       :func:`~AutoDNA.ai.demo_spectrograms.choose_stft_parameters`.</span>
+<span class="sd">    5. Converts pre-processed data to spectrograms.</span>
+<span class="sd">    6. Loads the JSON labels and calls :func:`save_training_sample`.</span>
+<span class="sd"> </span>
+<span class="sd">    :raises FileNotFoundError: Propagated from underlying I/O helpers if a</span>
+<span class="sd">        ``.npz`` file listed in ``LOG_FILES`` cannot be read.</span>
+<span class="sd">    :raises json.JSONDecodeError: If a label file contains malformed JSON.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1">#plot_pitch_vs_labels(PARSED_DIR, LABELED_DIR, 10)</span>
+    <span class="c1">#plot_pitch_vs_labels(PARSED_DIR, LABELED_DIR, 3)</span>
+
+    <span class="k">for</span> <span class="n">npz_path</span> <span class="ow">in</span> <span class="n">LOG_FILES</span><span class="p">:</span>
+        <span class="n">label_path</span> <span class="o">=</span> <span class="n">LABELED_DIR</span> <span class="o">/</span> <span class="p">(</span><span class="n">npz_path</span><span class="o">.</span><span class="n">stem</span> <span class="o">+</span> <span class="s1">&#39;_labels.json&#39;</span><span class="p">)</span>
+            
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">label_path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Warning: Label file not found for </span><span class="si">{</span><span class="n">npz_path</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">, skipping...&quot;</span><span class="p">)</span>
+            <span class="k">continue</span>
+        
+        <span class="n">sensors</span> <span class="o">=</span> <span class="n">load_sensor_data</span><span class="p">(</span><span class="n">npz_path</span><span class="p">)</span>
+        <span class="n">sensors</span> <span class="o">=</span> <span class="n">resample_sensors_to_common_grid</span><span class="p">(</span><span class="n">sensors</span><span class="p">)</span>
+
+        <span class="n">log_num</span> <span class="o">=</span> <span class="n">get_log_number</span><span class="p">(</span><span class="n">npz_path</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">log_num</span> <span class="ow">in</span> <span class="n">FILES_90_RIGHT_FLIP</span><span class="p">:</span>
+            <span class="n">sensors</span> <span class="o">=</span> <span class="n">swap_axes_90_right_flip</span><span class="p">(</span><span class="n">sensors</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">log_num</span> <span class="ow">in</span> <span class="n">FILES_90_LEFT_FLIP</span><span class="p">:</span>
+            <span class="n">sensors</span> <span class="o">=</span> <span class="n">swap_axes_90_left_flip</span><span class="p">(</span><span class="n">sensors</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Warning: </span><span class="si">{</span><span class="n">npz_path</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> not in any known file set, no axis correction applied&quot;</span><span class="p">)</span>
+
+        <span class="n">first</span> <span class="o">=</span> <span class="n">sensors</span><span class="p">[</span><span class="nb">next</span><span class="p">(</span><span class="nb">iter</span><span class="p">(</span><span class="n">sensors</span><span class="p">))]</span>
+        <span class="n">fs</span> <span class="o">=</span> <span class="n">estimate_sampling_rate</span><span class="p">(</span><span class="n">first</span><span class="p">[</span><span class="s1">&#39;ts&#39;</span><span class="p">])</span>
+    
+        <span class="n">processed</span> <span class="o">=</span> <span class="n">preprocess_sensor_data</span><span class="p">(</span><span class="n">sensors</span><span class="p">,</span> <span class="n">fs</span><span class="p">,</span> <span class="n">cutoff</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span>
+    
+        <span class="n">sample_count</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">first</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">])</span>
+        <span class="n">nperseg</span><span class="p">,</span> <span class="n">noverlap</span><span class="p">,</span> <span class="n">nfft</span> <span class="o">=</span> <span class="n">choose_stft_parameters</span><span class="p">(</span><span class="n">fs</span><span class="p">,</span> <span class="n">sample_count</span><span class="p">)</span>
+        <span class="n">converted</span> <span class="o">=</span> <span class="n">convert_all_sensors_to_spectrograms</span><span class="p">(</span><span class="n">processed</span><span class="p">,</span> <span class="n">fs</span><span class="p">,</span> <span class="n">nperseg</span><span class="p">,</span> <span class="n">noverlap</span><span class="p">,</span> <span class="n">nfft</span><span class="p">)</span>
+ 
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">label_path</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">labels</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)[</span><span class="s1">&#39;labels&#39;</span><span class="p">]</span>
+                
+        <span class="n">save_training_sample</span><span class="p">(</span><span class="n">npz_path</span><span class="p">,</span> <span class="n">converted</span><span class="p">,</span> <span class="n">labels</span><span class="p">,</span> <span class="n">processed</span><span class="p">,</span> <span class="n">nperseg</span><span class="p">,</span> <span class="n">noverlap</span><span class="p">,</span>
+                             <span class="n">output_dir</span><span class="o">=</span><span class="s1">&#39;input_data_flipped&#39;</span><span class="p">)</span></div>
+
+        
+        
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../index.html">AutoDNA</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules.html">App Modules</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../ai.html">AI / Signal Processing (<code class="docutils literal notranslate"><span class="pre">ai/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../stm32.html">STM32 Data Logger (<code class="docutils literal notranslate"><span class="pre">stm32/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tests.html">Test Suite (<code class="docutils literal notranslate"><span class="pre">tests/</span></code>)</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2026, AutoDNA Project.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.1.0</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

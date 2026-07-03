@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoDNA.app.feature_loader &#8212; AutoDNA 1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../../_static/documentation_options.js?v=f2a433a1"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for AutoDNA.app.feature_loader</h1><div class="highlight"><pre>
+<span></span><span class="c1"># -*- coding: utf-8 -*-</span>
+<span class="sd">&quot;&quot;&quot;Per-drive feature extraction and persistent storage for the fuel-regression model.</span>
+
+<span class="sd">Hooks into the live app *after* :class:`~app.data_loader.DriveDataLoader`</span>
+<span class="sd">has loaded the GPS/OBD CSV, since that&#39;s where distance, fuel ground</span>
+<span class="sd">truth, and segment data come from. The IMU side reads the STM32 ``.bin``</span>
+<span class="sd">recording for the same drive, if one is present.</span>
+
+<span class="sd">Created on Sun Jun 21 21:53:17 2026</span>
+
+<span class="sd">@author: mihal</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">datetime</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">asdict</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">AutoDNA.stm32.bin_parser.stm_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">read_packets_from_file</span><span class="p">,</span> <span class="n">save_to_npz</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">AutoDNA.ai.preprocessing</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_sensor_data</span><span class="p">,</span> <span class="n">resample_sensors_to_common_grid</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">AutoDNA.app.get_path</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_data_dir</span>
+
+<span class="n">STORE_PATH</span> <span class="o">=</span> <span class="n">get_data_dir</span><span class="p">()</span> <span class="o">/</span> <span class="s1">&#39;fuel_features_store.json&#39;</span>
+
+<span class="n">HARSH_JERK_THRESHOLD</span> <span class="o">=</span> <span class="mf">855.0</span>
+
+<span class="n">LIVE_DEVICE_NEEDS_RIGHT_FLIP_CORRECTION</span> <span class="o">=</span> <span class="kc">True</span>
+
+
+<div class="viewcode-block" id="find_bin_in_drive_dir">
+<a class="viewcode-back" href="../../../modules.html#AutoDNA.app.feature_loader.find_bin_in_drive_dir">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">find_bin_in_drive_dir</span><span class="p">(</span><span class="n">drive_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Find the STM .bin recording in a drive folder (alongside the GPS CSV).&quot;&quot;&quot;</span>
+    <span class="n">bins</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">drive_dir</span><span class="p">)</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s1">&#39;*.bin&#39;</span><span class="p">))</span> <span class="o">+</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">drive_dir</span><span class="p">)</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s1">&#39;*.BIN&#39;</span><span class="p">))</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">bins</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;No .bin (STM IMU) file found in </span><span class="si">{</span><span class="n">drive_dir</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">bins</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[AutoDNA] Multiple .bin files found — using first: </span><span class="si">{</span><span class="n">bins</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">bins</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span></div>
+
+
+
+<div class="viewcode-block" id="convert_bin_to_npz">
+<a class="viewcode-back" href="../../../modules.html#AutoDNA.app.feature_loader.convert_bin_to_npz">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">convert_bin_to_npz</span><span class="p">(</span><span class="n">bin_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Convert a .bin recording to .npz, caching the result next to the .bin</span>
+<span class="sd">    so repeated drive loads don&#39;t re-parse the same file.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">npz_path</span> <span class="o">=</span> <span class="n">bin_path</span><span class="o">.</span><span class="n">with_suffix</span><span class="p">(</span><span class="s1">&#39;.npz&#39;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">npz_path</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span> <span class="ow">and</span> <span class="n">npz_path</span><span class="o">.</span><span class="n">stat</span><span class="p">()</span><span class="o">.</span><span class="n">st_mtime</span> <span class="o">&gt;=</span> <span class="n">bin_path</span><span class="o">.</span><span class="n">stat</span><span class="p">()</span><span class="o">.</span><span class="n">st_mtime</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[AutoDNA] Using cached npz: </span><span class="si">{</span><span class="n">npz_path</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">npz_path</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[AutoDNA] Converting </span><span class="si">{</span><span class="n">bin_path</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> -&gt; </span><span class="si">{</span><span class="n">npz_path</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">packets</span> <span class="o">=</span> <span class="n">read_packets_from_file</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">bin_path</span><span class="p">))</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">packets</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;No packets parsed from </span><span class="si">{</span><span class="n">bin_path</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">save_to_npz</span><span class="p">(</span><span class="n">packets</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">npz_path</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">npz_path</span></div>
+
+
+
+<div class="viewcode-block" id="swap_axes_right_flip">
+<a class="viewcode-back" href="../../../modules.html#AutoDNA.app.feature_loader.swap_axes_right_flip">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">swap_axes_right_flip</span><span class="p">(</span><span class="n">sensors</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Axis correction for the live recording device&#39;s mounting orientation.&quot;&quot;&quot;</span>
+    <span class="n">corrected</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">data</span> <span class="ow">in</span> <span class="n">sensors</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">corrected</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s1">&#39;ts&#39;</span><span class="p">:</span>  <span class="n">data</span><span class="p">[</span><span class="s1">&#39;ts&#39;</span><span class="p">],</span>
+            <span class="s1">&#39;x&#39;</span><span class="p">:</span>   <span class="n">data</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span>
+            <span class="s1">&#39;y&#39;</span><span class="p">:</span>  <span class="o">-</span><span class="n">data</span><span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span>
+            <span class="s1">&#39;z&#39;</span><span class="p">:</span>   <span class="n">data</span><span class="p">[</span><span class="s1">&#39;z&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span>
+        <span class="p">}</span>
+    <span class="k">return</span> <span class="n">corrected</span></div>
+
+
+
+<span class="c1"># ── feature computation ──────────────────────────────────────────────────────</span>
+
+<span class="sd">&quot;&quot;&quot;def compute_drive_features(sensors, distance_km: float, duration_min: float) -&gt; dict:</span>
+<span class="sd">    if LIVE_DEVICE_NEEDS_RIGHT_FLIP_CORRECTION:</span>
+<span class="sd">        sensors = swap_axes_right_flip(sensors)</span>
+
+<span class="sd">    sensors_common = resample_sensors_to_common_grid(sensors)</span>
+
+<span class="sd">    accel_x = sensors_common[&#39;accel&#39;][&#39;x&#39;]</span>
+<span class="sd">    ts      = sensors_common[&#39;accel&#39;][&#39;ts&#39;]</span>
+<span class="sd">    </span>
+<span class="sd">    fs = 1.0 / np.median(np.diff(ts))</span>
+<span class="sd">    </span>
+<span class="sd">    from AutoDNA.ai.preprocessing import _timestamps_to_seconds, estimate_sampling_rate</span>
+<span class="sd">    for name, data in sensors.items():</span>
+<span class="sd">        ts_sec = _timestamps_to_seconds(data[&#39;ts&#39;])</span>
+<span class="sd">        fs_est = estimate_sampling_rate(ts_sec)</span>
+<span class="sd">          </span>
+<span class="sd">    window = max(3, int(fs * 0.1))</span>
+<span class="sd">    accel_x_smooth = np.convolve(accel_x, np.ones(window) / window, mode=&#39;same&#39;)</span>
+
+<span class="sd">    jerk = np.diff(accel_x_smooth) * fs</span>
+<span class="sd">    n_harsh_accel   = int(np.sum(jerk &gt;  HARSH_JERK_THRESHOLD))</span>
+<span class="sd">    n_harsh_braking = int(np.sum(jerk &lt; -HARSH_JERK_THRESHOLD))</span>
+<span class="sd">    </span>
+<span class="sd">    features = {}</span>
+<span class="sd">    if distance_km and distance_km &gt; 0:</span>
+<span class="sd">        features[&#39;harsh_accel_rate&#39;]   = n_harsh_accel   / distance_km</span>
+<span class="sd">        features[&#39;harsh_braking_rate&#39;] = n_harsh_braking / distance_km</span>
+<span class="sd">    else:</span>
+<span class="sd">        features[&#39;harsh_accel_rate&#39;]   = 0.0</span>
+<span class="sd">        features[&#39;harsh_braking_rate&#39;] = 0.0</span>
+
+<span class="sd">    features[&#39;accel_x_std&#39;] = float(accel_x.std())</span>
+<span class="sd">    features[&#39;rms_jerk&#39;]    = float(np.sqrt(np.mean(jerk**2)))</span>
+
+<span class="sd">    features[&#39;distance_km&#39;]     = distance_km if distance_km else 0.0</span>
+<span class="sd">    features[&#39;inv_distance_km&#39;] = 1.0 / (distance_km + 1.0) if distance_km else 0.0</span>
+<span class="sd">    features[&#39;avg_speed_kmh&#39;]   = (distance_km / (duration_min / 60.0)</span>
+<span class="sd">                                    if distance_km and duration_min &gt; 0 else 0.0)</span>
+
+<span class="sd">    return features&quot;&quot;&quot;</span>
+
+
+<div class="viewcode-block" id="compute_drive_features">
+<a class="viewcode-back" href="../../../modules.html#AutoDNA.app.feature_loader.compute_drive_features">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_drive_features</span><span class="p">(</span><span class="n">sensors_raw</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">drive_data</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute the full feature dict for one drive, combining IMU and GPS signals.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        sensors_raw: Resampled-to-50Hz sensor dict as returned by</span>
+<span class="sd">            :func:`AutoDNA.ai.preprocessing.load_sensor_data`.</span>
+<span class="sd">        drive_data: The :class:`~app.data_loader.DriveData` for the same</span>
+<span class="sd">            drive, already loaded from the CSV.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        dict: ``harsh_accel_rate``, ``harsh_braking_rate``, ``rms_jerk``</span>
+<span class="sd">        (IMU), ``avg_speed_kmh``, ``speed_variability``,</span>
+<span class="sd">        ``idle_time_pct`` (GPS), and ``distance_km`` / ``_duration_min``</span>
+<span class="sd">        (metadata) — the feature set consumed by</span>
+<span class="sd">        :mod:`app.fuel_model`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">LIVE_DEVICE_NEEDS_RIGHT_FLIP_CORRECTION</span><span class="p">:</span>
+        <span class="n">sensors_raw</span> <span class="o">=</span> <span class="n">swap_axes_right_flip</span><span class="p">(</span><span class="n">sensors_raw</span><span class="p">)</span>
+
+    <span class="n">sensors_common</span> <span class="o">=</span> <span class="n">resample_sensors_to_common_grid</span><span class="p">(</span><span class="n">sensors_raw</span><span class="p">)</span>
+
+    <span class="n">accel_x</span> <span class="o">=</span> <span class="n">sensors_common</span><span class="p">[</span><span class="s1">&#39;accel&#39;</span><span class="p">][</span><span class="s1">&#39;x&#39;</span><span class="p">]</span>
+    <span class="n">ts</span>      <span class="o">=</span> <span class="n">sensors_common</span><span class="p">[</span><span class="s1">&#39;accel&#39;</span><span class="p">][</span><span class="s1">&#39;ts&#39;</span><span class="p">]</span>
+    <span class="n">fs</span>      <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">median</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="n">ts</span><span class="p">))</span>
+
+    <span class="n">window</span>         <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">fs</span> <span class="o">*</span> <span class="mf">0.1</span><span class="p">))</span>
+    <span class="n">accel_x_smooth</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">convolve</span><span class="p">(</span><span class="n">accel_x</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">window</span><span class="p">)</span> <span class="o">/</span> <span class="n">window</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s1">&#39;same&#39;</span><span class="p">)</span>
+    <span class="n">jerk</span>           <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">diff</span><span class="p">(</span><span class="n">accel_x_smooth</span><span class="p">)</span> <span class="o">*</span> <span class="n">fs</span>
+
+    <span class="n">n_harsh_accel</span>   <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">jerk</span> <span class="o">&gt;</span>  <span class="n">HARSH_JERK_THRESHOLD</span><span class="p">))</span>
+    <span class="n">n_harsh_braking</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">jerk</span> <span class="o">&lt;</span> <span class="o">-</span><span class="n">HARSH_JERK_THRESHOLD</span><span class="p">))</span>
+
+    <span class="n">distance_km</span> <span class="o">=</span> <span class="n">drive_data</span><span class="o">.</span><span class="n">drive_distance_km</span>
+    <span class="n">gps_speed</span>   <span class="o">=</span> <span class="n">drive_data</span><span class="o">.</span><span class="n">gps_speed</span>   <span class="c1"># km/h array</span>
+
+    <span class="n">features</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="c1"># ── IMU features ──────────────────────────────────────────────────────</span>
+    <span class="k">if</span> <span class="n">distance_km</span> <span class="ow">and</span> <span class="n">distance_km</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">features</span><span class="p">[</span><span class="s1">&#39;harsh_accel_rate&#39;</span><span class="p">]</span>   <span class="o">=</span> <span class="n">n_harsh_accel</span>   <span class="o">/</span> <span class="n">distance_km</span>
+        <span class="n">features</span><span class="p">[</span><span class="s1">&#39;harsh_braking_rate&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">n_harsh_braking</span> <span class="o">/</span> <span class="n">distance_km</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">features</span><span class="p">[</span><span class="s1">&#39;harsh_accel_rate&#39;</span><span class="p">]</span>   <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="n">features</span><span class="p">[</span><span class="s1">&#39;harsh_braking_rate&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+    <span class="n">features</span><span class="p">[</span><span class="s1">&#39;rms_jerk&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">jerk</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)))</span>
+
+    <span class="c1"># ── GPS features ──────────────────────────────────────────────────────</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">gps_speed</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">features</span><span class="p">[</span><span class="s1">&#39;avg_speed_kmh&#39;</span><span class="p">]</span>     <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">gps_speed</span><span class="p">))</span>
+        <span class="n">features</span><span class="p">[</span><span class="s1">&#39;speed_variability&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">std</span><span class="p">(</span><span class="n">gps_speed</span><span class="p">))</span>
+        <span class="n">features</span><span class="p">[</span><span class="s1">&#39;idle_time_pct&#39;</span><span class="p">]</span>     <span class="o">=</span> <span class="nb">float</span><span class="p">((</span><span class="n">gps_speed</span> <span class="o">&lt;</span> <span class="mf">2.0</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span> <span class="o">*</span> <span class="mi">100</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">features</span><span class="p">[</span><span class="s1">&#39;avg_speed_kmh&#39;</span><span class="p">]</span>     <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="n">features</span><span class="p">[</span><span class="s1">&#39;speed_variability&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="n">features</span><span class="p">[</span><span class="s1">&#39;idle_time_pct&#39;</span><span class="p">]</span>     <span class="o">=</span> <span class="mf">0.0</span>
+
+    <span class="c1"># ── metadata ──────────────────────────────────────────────────────────</span>
+    <span class="n">features</span><span class="p">[</span><span class="s1">&#39;distance_km&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">distance_km</span> <span class="k">if</span> <span class="n">distance_km</span> <span class="k">else</span> <span class="mf">0.0</span>
+    <span class="n">features</span><span class="p">[</span><span class="s1">&#39;_duration_min&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">drive_data</span><span class="o">.</span><span class="n">drive_duration_sec</span> <span class="o">/</span> <span class="mf">60.0</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[AutoDNA] Features: </span><span class="si">{</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s1">=</span><span class="si">{</span><span class="n">v</span><span class="si">:</span><span class="s1">.2f</span><span class="si">}</span><span class="s1">&#39;</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">k</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">features</span><span class="o">.</span><span class="n">items</span><span class="p">())</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">features</span></div>
+
+
+
+<span class="c1"># ── persistent storage ──────────────────────────────────────────────────────</span>
+
+<div class="viewcode-block" id="DriveRecord">
+<a class="viewcode-back" href="../../../modules.html#AutoDNA.app.feature_loader.DriveRecord">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">DriveRecord</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;One entry of the persistent fuel-feature store — the Drives history&#39;s underlying record.&quot;&quot;&quot;</span>
+
+    <span class="n">drive_name</span><span class="p">:</span>  <span class="nb">str</span>
+    <span class="n">drive_path</span><span class="p">:</span>  <span class="nb">str</span>        <span class="c1"># path to the drive folder — needed to reload the drive from the Drives tab</span>
+    <span class="n">features</span><span class="p">:</span>    <span class="nb">dict</span>
+    <span class="n">fuel_l100km</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">timestamp</span><span class="p">:</span>   <span class="nb">str</span></div>
+
+ 
+ 
+<div class="viewcode-block" id="load_store">
+<a class="viewcode-back" href="../../../modules.html#AutoDNA.app.feature_loader.load_store">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_store</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Read all stored drive records (used by the Drives page and the fuel model).&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">STORE_PATH</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+        <span class="k">return</span> <span class="p">[]</span>
+    <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">STORE_PATH</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span></div>
+
+
+
+<div class="viewcode-block" id="save_store">
+<a class="viewcode-back" href="../../../modules.html#AutoDNA.app.feature_loader.save_store">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">save_store</span><span class="p">(</span><span class="n">records</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Overwrite the persistent fuel-feature store with the given records.&quot;&quot;&quot;</span>
+    <span class="n">STORE_PATH</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">STORE_PATH</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">records</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">))</span></div>
+
+ 
+ 
+<div class="viewcode-block" id="append_drive_record">
+<a class="viewcode-back" href="../../../modules.html#AutoDNA.app.feature_loader.append_drive_record">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">append_drive_record</span><span class="p">(</span><span class="n">drive_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">drive_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                        <span class="n">features</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">fuel_l100km</span><span class="p">:</span> <span class="nb">float</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Append one drive record to the persistent store, skipping duplicates.&quot;&quot;&quot;</span>
+    <span class="n">records</span> <span class="o">=</span> <span class="n">load_store</span><span class="p">()</span>
+ 
+    <span class="c1"># avoid duplicating the same drive if reloaded</span>
+    <span class="n">records</span> <span class="o">=</span> <span class="p">[</span><span class="n">r</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">records</span> <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;drive_name&#39;</span><span class="p">)</span> <span class="o">!=</span> <span class="n">drive_name</span><span class="p">]</span>
+ 
+    <span class="n">records</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">asdict</span><span class="p">(</span><span class="n">DriveRecord</span><span class="p">(</span>
+        <span class="n">drive_name</span><span class="o">=</span><span class="n">drive_name</span><span class="p">,</span>
+        <span class="n">drive_path</span><span class="o">=</span><span class="n">drive_path</span><span class="p">,</span>
+        <span class="n">features</span><span class="o">=</span><span class="n">features</span><span class="p">,</span>
+        <span class="n">fuel_l100km</span><span class="o">=</span><span class="n">fuel_l100km</span><span class="p">,</span>
+        <span class="n">timestamp</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">(</span><span class="n">timespec</span><span class="o">=</span><span class="s1">&#39;seconds&#39;</span><span class="p">),</span>
+    <span class="p">)))</span>
+    <span class="n">save_store</span><span class="p">(</span><span class="n">records</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">records</span></div>
+
+ 
+ 
+<div class="viewcode-block" id="store_to_xy">
+<a class="viewcode-back" href="../../../modules.html#AutoDNA.app.feature_loader.store_to_xy">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">store_to_xy</span><span class="p">(</span><span class="n">records</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert stored records into (X, y, feature_names) for model fitting.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">records</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span>
+    <span class="n">feature_names</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">records</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s1">&#39;features&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+    <span class="n">X</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([[</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;features&#39;</span><span class="p">][</span><span class="n">name</span><span class="p">]</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">feature_names</span><span class="p">]</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">records</span><span class="p">])</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;fuel_l100km&#39;</span><span class="p">]</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">records</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">feature_names</span></div>
+
+ 
+ 
+<span class="c1"># ── full hook for the live app ─────────────────────────────────────────────</span>
+ 
+<div class="viewcode-block" id="process_drive_fuel_features">
+<a class="viewcode-back" href="../../../modules.html#AutoDNA.app.feature_loader.process_drive_fuel_features">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">process_drive_fuel_features</span><span class="p">(</span><span class="n">drive_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">drive_data</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Full hook: find .bin in the drive folder, convert to .npz (cached),</span>
+<span class="sd">    compute fuel-regression features, append to persistent store.</span>
+<span class="sd"> </span>
+<span class="sd">    Call AFTER DriveDataLoader.load_drive() — drive_data must already</span>
+<span class="sd">    have drive_distance_km, drive_duration_sec, avg_fuel_l100km populated.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">bin_path</span> <span class="o">=</span> <span class="n">find_bin_in_drive_dir</span><span class="p">(</span><span class="n">drive_dir</span><span class="p">)</span>
+    <span class="n">npz_path</span> <span class="o">=</span> <span class="n">convert_bin_to_npz</span><span class="p">(</span><span class="n">bin_path</span><span class="p">)</span>
+ 
+    <span class="n">sensors_raw</span> <span class="o">=</span> <span class="n">load_sensor_data</span><span class="p">(</span><span class="n">npz_path</span><span class="p">)</span>  
+ 
+    <span class="n">features</span> <span class="o">=</span> <span class="n">compute_drive_features</span><span class="p">(</span><span class="n">sensors_raw</span><span class="p">,</span> <span class="n">drive_data</span><span class="p">)</span>
+ 
+    <span class="n">records</span> <span class="o">=</span> <span class="n">append_drive_record</span><span class="p">(</span>
+        <span class="n">drive_name</span><span class="o">=</span><span class="n">drive_data</span><span class="o">.</span><span class="n">drive_name</span><span class="p">,</span>
+        <span class="n">drive_path</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">drive_dir</span><span class="p">),</span>      
+        <span class="n">features</span><span class="o">=</span><span class="n">features</span><span class="p">,</span>
+        <span class="n">fuel_l100km</span><span class="o">=</span><span class="n">drive_data</span><span class="o">.</span><span class="n">avg_fuel_l100km</span><span class="p">,</span>
+    <span class="p">)</span>
+ 
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[AutoDNA] Fuel features stored for </span><span class="si">{</span><span class="n">drive_data</span><span class="o">.</span><span class="n">drive_name</span><span class="si">}</span><span class="s2"> &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;(total drives in store: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">records</span><span class="p">)</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+ 
+    <span class="k">return</span> <span class="n">features</span></div>
+
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../index.html">AutoDNA</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../modules.html">App Modules</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../ai.html">AI / Signal Processing (<code class="docutils literal notranslate"><span class="pre">ai/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../stm32.html">STM32 Binary Parser (<code class="docutils literal notranslate"><span class="pre">stm32/</span></code>)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tests.html">Test Suite (<code class="docutils literal notranslate"><span class="pre">tests/</span></code>)</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2026, AutoDNA Project.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.1.0</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

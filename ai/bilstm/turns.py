@@ -1,3 +1,10 @@
+"""BiLSTM turn detector experiment (1-D gyro-Z spectrogram input).
+
+Trains a bidirectional LSTM to predict per-timestep turn presence and direction
+from the gyro-Z magnitude spectrogram plus its signed per-window mean. Standalone
+research script — not used by the live GPS-only app.
+"""
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -20,6 +27,7 @@ min_save_epoch = 15
 
 
 def load_sample(filepath):
+    """Load one sample as ``(x, y)``: gyro-Z spectrogram + signed means (and accel-X if present), turn labels."""
     data = np.load(filepath)
     gyro = data['gyro_rgb'].astype(np.float32) / 255.0  # (F, T, 3)
     gyro_z_mean = data['gyro_z_mean_per_window']        # (T,)
@@ -27,7 +35,7 @@ def load_sample(filepath):
 
     F, T, _ = gyro.shape
     gyro_z_spec = gyro[:, :, 2].T                       # (T, F) — magnitude
-    
+
     # normalize magnitude
     mn, mx = gyro_z_spec.min(), gyro_z_spec.max()
     if mx > mn:
@@ -37,7 +45,7 @@ def load_sample(filepath):
     max_abs = np.abs(gyro_z_mean).max()
     if max_abs > 0:
         gyro_z_mean = gyro_z_mean / max_abs
-    
+
     # append mean as extra feature column: (T, F+1)
     #accel = data['accel_rgb'].astype(np.float32) / 255.0
     accel_x_mean = data.get('accel_x_mean_per_window', None)
@@ -60,6 +68,7 @@ def load_sample(filepath):
 
 
 def load_sample_g(filepath):   #samo gyro
+    """Gyro-only variant of :func:`load_sample`: gyro-Z spectrogram + signed mean, turn labels."""
     data = np.load(filepath)
     gyro = data['gyro_rgb'].astype(np.float32) / 255.0  # (F, T, 3)
     gyro_z_mean = data['gyro_z_mean_per_window']        # (T,)
@@ -84,18 +93,26 @@ def load_sample_g(filepath):   #samo gyro
 
 
 class DriveDataset(Dataset):
+    """Dataset of per-drive turn samples loaded via :func:`load_sample_g`."""
+
     def __init__(self, files):
+        """Store the list of ``.npz`` sample paths."""
         self.files = list(files)
 
     def __len__(self):
+        """Return the number of samples."""
         return len(self.files)
 
     def __getitem__(self, idx):
+        """Return the ``(x, y)`` tensors for sample *idx*."""
         return load_sample_g(self.files[idx])
 
 
 class BiLSTM(nn.Module):
+    """Bidirectional LSTM predicting per-timestep turn presence and direction (2 outputs)."""
+
     def __init__(self, input_size):
+        """Build the BiLSTM and linear head for *input_size* features per timestep."""
         super().__init__()
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers,
                             bidirectional=True, batch_first=True)
@@ -103,6 +120,7 @@ class BiLSTM(nn.Module):
         self.fc = nn.Linear(hidden_size * 2, num_outputs)
 
     def forward(self, x):
+        """Return raw ``(batch, T, 2)`` logits (no sigmoid) for input sequence *x*."""
         out, _ = self.lstm(x)
         out = self.dropout(out)
         return self.fc(out)          # raw logits, no sigmoid
@@ -143,6 +161,10 @@ def compute_f1(pred_prob, target, threshold=0.5):
 
 
 def train(model, train_files, val_files):
+    """Train the turn BiLSTM with early stopping on validation F1; returns the best F1.
+
+    Writes the best weights to ``bilstm_best_1d.pth``.
+    """
     start_time = time.time()
     print("Training...")
     train_set = DriveDataset(train_files)
@@ -287,9 +309,10 @@ def evaluate(model, val_files):
 
 
 def main():
+    """Train and evaluate the turn BiLSTM across several random seeds and report average F1."""
     sample_files = sorted(Path('../input_data_flipped').glob('*_training.npz'))
-    
-    mode = 2 
+
+    mode = 2
     
     if mode == 1:
         f1s = []
